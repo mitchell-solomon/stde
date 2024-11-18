@@ -1,0 +1,7 @@
+*.pyc
+/_logs/
+/_exp/
+/wandb/
+/stde.egg-info/
+/_results/
+/_mem_results/

@@ -1,0 +1,12 @@
+absl-py
+dm-haiku
+jax
+jaxtyping
+matplotlib
+ml_collections
+optax
+pandas
+pydantic
+shortuuid
+tqdm
+wandb
