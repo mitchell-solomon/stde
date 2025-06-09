@@ -35,7 +35,7 @@ class EqnConfig:
     "KdV2d",
     "highord1d",
   ] = "HJB_LQG"
-  """size of hidden layers"""
+  """specifies which equation/PDE to solve"""
   mu: float = 1.0
   """control strength in HJB-LQG"""
   T: float = 1.0
