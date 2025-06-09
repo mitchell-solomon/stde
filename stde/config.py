@@ -210,7 +210,7 @@ class Config(ConfigDict):
     if step == 0:
       with (self.get_save_dir() / f"config.txt").open("w") as f:
         f.write(str(self))
-    if (step + 1) != self.gd_cfg.epochs and step % self.save_every != 0:
+    if (step + 1) != self.gd_cfg.epochs and step % self.test_cfg.save_every != 0:
       return
     with (self.get_save_dir() / f"params_{step}.pkl").open("wb") as f:
       pickle.dump(params, f)
