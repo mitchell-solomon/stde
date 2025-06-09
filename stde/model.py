@@ -14,7 +14,7 @@ from stde.equations import pinn_loss_fn
 from stde.types import Equation
 
 
-def calcualte_gain_leaky_relu(negative_slope: float) -> float:
+def calculate_gain_leaky_relu(negative_slope: float) -> float:
   """This is what pytorch uses by default for the gain in
   kaiming uniform initialization for the Linear layer.
 
@@ -26,7 +26,7 @@ def calcualte_gain_leaky_relu(negative_slope: float) -> float:
 
 INITIALIZERS = dict(
   kaiming_uniform=hk.initializers.VarianceScaling(
-    scale=calcualte_gain_leaky_relu(math.sqrt(5))**2,
+    scale=calculate_gain_leaky_relu(math.sqrt(5))**2,
     mode='fan_in',
     distribution='uniform'
   ),

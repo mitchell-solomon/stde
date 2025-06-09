@@ -35,7 +35,7 @@ class EqnConfig:
     "KdV2d",
     "highord1d",
   ] = "HJB_LQG"
-  """size of hidden layers"""
+  """specifies which equation/PDE to solve"""
   mu: float = 1.0
   """control strength in HJB-LQG"""
   T: float = 1.0
@@ -210,7 +210,7 @@ class Config(ConfigDict):
     if step == 0:
       with (self.get_save_dir() / f"config.txt").open("w") as f:
         f.write(str(self))
-    if (step + 1) != self.gd_cfg.epochs and step % self.save_every != 0:
+    if (step + 1) != self.gd_cfg.epochs and step % self.test_cfg.save_every != 0:
       return
     with (self.get_save_dir() / f"params_{step}.pkl").open("wb") as f:
       pickle.dump(params, f)
