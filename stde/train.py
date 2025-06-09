@@ -204,7 +204,7 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
 
         l1_rels.append(l1_rel)
         l2_rels.append(l2_rel)
-        w1_t_rels.append(w1_t_rels)
+        w1_t_rels.append(w1_t_rel)
 
         desc_str = f"{l1_rel=:.2E} | {l2_rel=:.2E} | {loss=:.2E} | "
         desc_str += " | ".join(
