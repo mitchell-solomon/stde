@@ -3,6 +3,7 @@ import pytest
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 hk = pytest.importorskip('haiku')
+pytest.importorskip('folx')
 
 from stde.config import EqnConfig
 from stde.operators import get_hutchinson_random_vec, get_sdgd_idx_set
