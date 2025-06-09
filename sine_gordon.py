@@ -16,9 +16,9 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser(description='PINN Training')
 parser.add_argument('--SEED', type=int, default=0)
 parser.add_argument(
-  '--dim', type=int, default=10000
+  '--dim', type=int, default=10
 )  # dimension of the problem.
-parser.add_argument('--epochs', type=int, default=10000)  # Adam epochs
+parser.add_argument('--epochs', type=int, default=20000)  # Adam epochs
 parser.add_argument('--lr', type=float, default=1e-3)  # Adam lr
 parser.add_argument('--PINN_h', type=int, default=128)  # width of PINN
 parser.add_argument('--PINN_L', type=int, default=4)  # depth of PINN
@@ -31,7 +31,7 @@ parser.add_argument(
 parser.add_argument(
   '--test_batch_size', type=int, default=int(200)
 )  # num of test points
-parser.add_argument('--x_radius', type=float, default=1)
+parser.add_argument('--x_radius', type=float, default=2.0)
 parser.add_argument('--rand_batch_size', type=int, default=10)
 parser.add_argument(
   '--sparse',
@@ -41,6 +41,8 @@ parser.add_argument(
 parser.add_argument('--eval_every', type=int, default=1000)
 args = parser.parse_args()
 print(args)
+
+np.random.seed(args.SEED)
 
 ###########################
 # STDE
