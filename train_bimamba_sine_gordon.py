@@ -26,7 +26,14 @@ from pprint import pprint
 
 
 from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
-
+from stde.config import EqnConfig
+from stde.equations import (
+    twobody_sol as eq_twobody_sol,
+    SineGordon_twobody_inhomo_exact,
+    threebody_sol as eq_threebody_sol,
+    SineGordon_threebody_inhomo_exact,
+)
+from stde.operators import hvp
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -56,6 +63,21 @@ parser.add_argument(
 parser.add_argument(
     '--sparse', action="store_true",
     help='whether to use sparse or dense stde'
+)
+
+parser.add_argument(
+    "--trace_method",
+    type=str,
+    choices=["taylor", "hutchinson"],
+    default="taylor",
+    help="choose Hessian trace estimator"
+)
+parser.add_argument(
+    "--problem",
+    type=str,
+    choices=["twobody", "threebody"],
+    default="twobody",
+    help="choose sine-gordon variant"
 )
 
 # numberof bidirectional mamba blocks
@@ -193,37 +215,60 @@ def sample_domain_fn(batch_size: int,
 # Hessian‐trace estimator
 # -----------------------------------------------------------------------------
 
-# STDE
+# STDE using utilities from stde.operators
 def hess_trace(fn: Callable) -> Callable:
+    """Return a Hessian-trace estimator for ``fn``."""
 
     def fn_trace(x_i, key):
         key, subkey = jax.random.split(key)
 
-        if args.sparse:
-            key, subkey = jax.random.split(subkey)
-            idx_set = jax.random.choice(
-                subkey, args.dim, shape=(args.rand_batch_size,), replace=True
-            )
-            rand_vec = jax.vmap(lambda i: jnp.eye(args.dim)[i])(idx_set)
+        if args.trace_method == "hutchinson":
+            if args.sparse:
+                idx_set = jax.random.choice(
+                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
+                )
 
+                hvp_fn = lambda i: hvp(fn, x_i, jnp.eye(args.dim)[i])[i]
+                hvps = jax.vmap(hvp_fn)(idx_set)
+                trace_est = jnp.mean(hvps) * args.dim
+            else:
+                rand_vec = 2 * (
+                    jax.random.randint(
+                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
+                    )
+                    - 0.5
+                )
+
+                hvps = jax.vmap(lambda v: hvp(fn, x_i, v))(rand_vec)
+                trace_est = jnp.mean(jnp.einsum("ij,ij->i", rand_vec, hvps))
+
+            f_val = fn(x_i)
+            return f_val, trace_est, key
+
+        elif args.trace_method == "taylor":
+            if args.sparse:
+                idx_set = jax.random.choice(
+                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
+                )
+                rand_vec = jax.vmap(lambda i: jnp.eye(args.dim)[i])(idx_set)
+            else:
+                rand_vec = 2 * (
+                    jax.random.randint(
+                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
+                    )
+                    - 0.5
+                )
+
+            taylor_2 = lambda v: jet.jet(
+                fun=fn, primals=(x_i,), series=((v, jnp.zeros(args.dim)),)
+            )
+            f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_vec)
+            trace_est = jnp.mean(hvps)
+            if args.sparse:
+                trace_est *= args.dim
+            return f_vals[0], trace_est, key
         else:
-            key, subkey = jax.random.split(subkey)
-            rand_vec = 2 * (
-                jax.random.randint(
-                subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
-                ) - 0.5
-            )
-        # perform the jvp‐via‐Taylor‐series
-        taylor_2 = lambda v: jet.jet(
-        fun=fn, primals=(x_i,), series=((v, jnp.zeros(args.dim)),)
-        )
-        f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_vec)
-        trace_est = jnp.mean(hvps)
-        if args.sparse:
-            trace_est *= args.dim
-        return f_vals[0], trace_est, key
-
-    return fn_trace
+            raise ValueError(f"Unknown trace_method {args.trace_method}")
 
 def test_hess_trace_estimator():
     print("\n=== Testing STDE Hessian-Trace Estimator ===")
@@ -298,51 +343,16 @@ def SineGordon_op(x, u, key: jax.Array) -> Tuple[Float[Array, "xt_dim"], jax.Arr
 coeffs_ = np.random.randn(1, args.dim)
 
 
-def twobody_sol(x) -> Float[Array, "*batch"]:
-    t1 = args.x_radius**2 - jnp.sum(x**2, -1)
-    x1, x2 = x[..., :-1], x[..., 1:]
-    t2 = coeffs_[:, :-1] * jnp.sin(x1 + jnp.cos(x2) + x2 * jnp.cos(x1))
-    t2 = jnp.sum(t2, -1)
-    u_exact = jnp.squeeze(t1 * t2)
-    return u_exact
+eqn_cfg = EqnConfig(dim=args.dim, max_radius=args.x_radius)
+eqn_cfg.coeffs = coeffs_
 
-def twobody_lapl_analytical(x):
-    coeffs = coeffs_[:, :-1]
-    const_2 = 1
-    u1 = 1 - np.sum(x**2)
-    du1_dx = -2 * x
-    d2u1_dx2 = -2
+if args.problem == "twobody":
+    sol_fn = lambda x: eq_twobody_sol(x, None, eqn_cfg)
+    g_exact_fn = lambda x: SineGordon_twobody_inhomo_exact(x, eqn_cfg)
+else:
+    sol_fn = lambda x: eq_threebody_sol(x, None, eqn_cfg)
+    g_exact_fn = lambda x: SineGordon_threebody_inhomo_exact(x, eqn_cfg)
 
-    x1, x2 = x[:-1], x[1:]
-    coeffs = coeffs.reshape(-1)
-    u2 = coeffs * jnp.sin(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1)))
-    u2 = jnp.sum(u2)
-    du2_dx_part1 = coeffs * jnp.cos(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * \
-            const_2 * (1 - x2 * jnp.sin(x1))
-    du2_dx_part2 = coeffs * jnp.cos(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * \
-            const_2 * (-jnp.sin(x2) + jnp.cos(x1))
-    du2_dx = jnp.zeros((args.dim,))
-    du2_dx = du2_dx.at[:-1].add(du2_dx_part1)
-    du2_dx = du2_dx.at[1:].add(du2_dx_part2)
-    d2u2_dx2_part1 = -coeffs * jnp.sin(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * \
-        const_2**2 * (1 - x2 * jnp.sin(x1))**2 + \
-        coeffs * const_2 * jnp.cos(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * (- x2 * jnp.cos(x1))
-    d2u2_dx2_part2 = -coeffs * jnp.sin(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * \
-        const_2**2 * (-jnp.sin(x2) + jnp.cos(x1))**2 + \
-        coeffs * const_2 * jnp.cos(const_2 * (x1 + jnp.cos(x2) + x2 * jnp.cos(x1))) * \
-            (-jnp.cos(x2))
-    d2u2_dx2 = jnp.zeros((args.dim,))
-    d2u2_dx2 = d2u2_dx2.at[:-1].add(d2u2_dx2_part1)
-    d2u2_dx2 = d2u2_dx2.at[1:].add(d2u2_dx2_part2)
-    ff = u1 * d2u2_dx2 + 2 * du1_dx * du2_dx + u2 * d2u1_dx2
-    ff = jnp.sum(ff)
-    u = (u1 * u2)
-    return ff, u
-
-def SineGordon_twobody_inhomo_exact(x):
-    u_exact_lapl, u_exact = twobody_lapl_analytical(x)
-    g_exact = u_exact_lapl + jnp.sin(u_exact)
-    return g_exact
 
 def SineGordon_res_fn(x, u, key) -> Float[Array, "xt_dim"]:
     r"""
@@ -350,7 +360,7 @@ def SineGordon_res_fn(x, u, key) -> Float[Array, "xt_dim"]:
     L u(x) = g(x)
     """
     Lu = SineGordon_op(x, u, key)
-    g = SineGordon_twobody_inhomo_exact(x)
+    g = g_exact_fn(x)
     return Lu - g
 
 # -----------------------------------------------------------------------------
@@ -487,7 +497,7 @@ def main():
         # collapse batch & seq dims to analytical solver
         B, L, D = x_test_seq.shape
         x_flat = x_test_seq.reshape((B * L, D))
-        y_flat = jax.vmap(twobody_sol)(x_flat)
+        y_flat = jax.vmap(sol_fn)(x_flat)
         test_seqs.append(x_test_seq)
         test_truths.append(y_flat.reshape((B, L)))
     test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
@@ -559,7 +569,7 @@ def main():
                     y0, lap, key = hess_trace(u_fn)(x_l, key)
 
                     # analytic inhomogeneity
-                    g0 = SineGordon_twobody_inhomo_exact(x_l)
+                    g0 = g_exact_fn(x_l)
 
                     return (lap + jnp.sin(y0) - g0), key
 
