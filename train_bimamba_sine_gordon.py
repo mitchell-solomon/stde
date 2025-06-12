@@ -45,7 +45,6 @@ parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
-parser.add_argument("--rand_batch_size", type=int, default=16)
 parser.add_argument("--x_radius", type=float, default=1.0)
 parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
 
@@ -119,6 +118,11 @@ parser.add_argument("--ssm_activation", type=str, default="silu", choices=["silu
 parser.add_argument("--run_name", type=str, default="test_run")
 
 args = parser.parse_args()
+
+# derive rand_batch_size from dimension (order of magnitude lower)
+rand_batch_size = max(2, args.dim // 10)
+args.rand_batch_size = rand_batch_size
+
 pprint(args)
 
 # set up Haiku PRNG sequence for stde.operators
@@ -233,7 +237,7 @@ eqn_cfg = EqnConfig(
     name=args.eqn_name,
     dim=args.dim,
     max_radius=args.x_radius,
-    rand_batch_size=args.rand_batch_size,
+    rand_batch_size=rand_batch_size,
     hess_diag_method=args.hess_diag_method,
     stde_dist=args.stde_dist,
 )
@@ -439,7 +443,7 @@ def main():
         # 1) split off one rng for sampling, one to carry forward
         batch_rng, next_rng = jax.random.split(state.rng)
         x_seq, batch_rng = sample_domain_fn(
-            batch_size=args.rand_batch_size,
+            batch_size=rand_batch_size,
             rng=batch_rng,
             radius=args.x_radius,
             dim=args.dim,
@@ -461,7 +465,7 @@ def main():
 
             # 2) sample a fresh batch of input sequences
             x_seq, batch_rng = sample_domain_fn(
-                batch_size=args.rand_batch_size,
+                batch_size=rand_batch_size,
                 rng=batch_rng,
                 radius=args.x_radius,
                 dim=args.dim,
