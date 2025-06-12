@@ -3,8 +3,10 @@ import haiku as hk
 import jax.numpy as jnp
 import numpy as np
 
-
-
+import jax
+import jax.numpy as jnp
+import haiku as hk
+import folx
 
 from stde.config import EqnConfig
 from stde.operators import get_hutchinson_random_vec, get_sdgd_idx_set

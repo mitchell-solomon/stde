@@ -3,7 +3,7 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 
 import haiku as hk
 import jax
@@ -34,7 +34,9 @@ from stde.equations import (
     threebody_sol as eq_threebody_sol,
     SineGordon_threebody_inhomo_exact,
 )
-from stde.operators import hte
+
+from stde.operators import hess_diag
+
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -232,12 +234,13 @@ def sample_domain_fn(batch_size: int,
 # STDE using utilities from stde.operators
 
 def hess_trace(fn: Callable, cfg: EqnConfig) -> Callable:
-    """Return a Hessian-trace estimator for ``fn`` using :func:`hte`."""
+    """Return a Laplacian estimator for ``fn`` using :func:`hess_diag`."""
 
-    ht = hte(fn, cfg, argnums=0)
+    hd = hess_diag(fn, cfg, argnums=0, with_time=False)
 
     def fn_trace(x_i):
-        _, f_val, trace_est = ht(x_i)
+        _, f_val, _, hess_diag_val = hd(x_i)
+        trace_est = jnp.sum(hess_diag_val)
         return f_val, trace_est
 
     return fn_trace
@@ -327,7 +330,7 @@ def main():
             return (radius**2 - jnp.sum(x_in**2, -1)) * u_val
     
     # make a class for the PINN, which is a stack of Bi-MAMBA blocks
-    class PINN(nn.Module):
+    class BiMambaPINN(nn.Module):
         @nn.compact
         def __call__(self, x):
             # Ensure input shape is (B, L, D)
@@ -347,8 +350,35 @@ def main():
 
             return x_out
 
+        def tabulate_model(self,
+                           n_pts: int = 4,
+                           dim: int = args.dim,
+                           radius: float = args.x_radius,
+                           seq_len: int = args.seq_len,
+                           rng: Optional[jax.Array] = None):
+            """Print a tabulated summary of the model architecture."""
+
+            if rng is None:
+                rng = jax.random.PRNGKey(0)
+
+            x, _ = sample_domain_fn(
+                batch_size=n_pts,
+                rng=rng,
+                radius=radius,
+                dim=dim,
+                seq_len=seq_len,
+                sampling_mode=args.sampling_mode,
+                x_ordering=args.x_ordering,
+            )
+
+            print(nn.tabulate(
+                self,
+                rngs={"params": rng},
+                mutable=["params", "diagnostics", "intermediates"],
+            )(x))
+
     # And then proceed to instantiate your model as before:
-    mamba = PINN()
+    mamba = BiMambaPINN()
 
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)
@@ -364,6 +394,9 @@ def main():
     # print input and output shapes
     print("Input shape:", x_dummy.shape)
     print("Output shape:", mamba.apply(flax_vars, x_dummy).shape)
+
+    # Tabulate the model architecture for reference
+    mamba.tabulate_model()
     
     # init exponential decay learning rate schedule
     
@@ -472,26 +505,35 @@ def main():
                 return y2[l]
 
             # 4) compute the vector of residuals for one sequence
-        def residuals_for_one_sequence(full_seq):
-            L = full_seq.shape[0]
 
-            def one_step_res(l, x_l):
-                # build a u_fn that closes over `params` and this full_seq
-                def u_fn(xi):
-                    return y_at_l(xi, l, full_seq)
+            def residuals_for_one_sequence(full_seq, key):
+                L = full_seq.shape[0]
 
-                # STDE Hessian-trace at x_l
-                y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
+                def one_step_res(l, x_l, key):
+                    # build a u_fn that closes over `params` and this full_seq
+                    def u_fn(xi):
+                        return y_at_l(xi, l, full_seq)
 
-                # analytic inhomogeneity
-                g0 = g_exact_fn(x_l)
+                    # STDE Hessian-trace at x_l
+                    y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
 
-                return lap + jnp.sin(y0) - g0
+                    # analytic inhomogeneity
+                    g0 = g_exact_fn(x_l)
 
-            resids = jax.vmap(one_step_res)(jnp.arange(L), full_seq)
-            return resids
+                    return (lap + jnp.sin(y0) - g0), key
 
-        all_resids = jax.vmap(residuals_for_one_sequence)(x_seq)  # (B, L)
+                # split into L subkeys, run across time steps
+                keys = jax.random.split(key, L)
+                resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
+                    jnp.arange(L), full_seq, keys
+                )
+                return resids, _
+
+            # 5) vectorize over the B sequences in the batch
+            outer_keys = jax.random.split(batch_rng, x_seq.shape[0])
+            all_resids, _ = jax.vmap(
+                residuals_for_one_sequence, in_axes=(0, 0), out_axes=(0, 0)
+            )(x_seq, outer_keys)  # all_resids shape: (B, L)
 
             # 6) mean-squared residual loss
             loss = jnp.mean(all_resids ** 2)
@@ -504,6 +546,7 @@ def main():
         state = state.apply_gradients(grads=grads, rng=new_rng)
 
         return state, loss, grads
+    
     losses = []
     for step in tqdm(range(args.epochs), desc="training"):
         # let train_step now return (new_state, train_loss, grads)

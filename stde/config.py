@@ -1,6 +1,6 @@
 import pickle
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Sequence, Optional, Any
 
 from ml_collections import ConfigDict
 from pydantic.config import ConfigDict as PydanticConfigDict
@@ -93,7 +93,7 @@ class EqnConfig:
   distribution X_t defined by the stochastic process."""
   unbiased: bool = False
   """whether to used unbiased gradient estimate"""
-  coeffs: np.ndarray = None
+  coeffs: Optional[Any] = None
   """coefficients for random coefficient PDEs"""
 
 
