@@ -250,7 +250,7 @@ if eqn.time_dependent:
 sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
 
 def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-    res = eqn.res(x, None, u_fn, eqn_cfg)
+    res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
     if isinstance(res, tuple):
         res = res[0]
     return res
