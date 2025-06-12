@@ -3,7 +3,7 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Callable, Tuple, Any
+from typing import Callable, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -34,6 +34,10 @@ from stde.equations import (
     SineGordon_threebody_inhomo_exact,
 )
 from stde.operators import hvp
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -63,6 +67,20 @@ parser.add_argument(
 parser.add_argument(
     '--sparse', action="store_true",
     help='whether to use sparse or dense stde'
+)
+parser.add_argument(
+    "--trace_method",
+    type=str,
+    choices=["taylor", "hutchinson"],
+    default="taylor",
+    help="choose Hessian trace estimator"
+)
+parser.add_argument(
+    "--problem",
+    type=str,
+    choices=["twobody", "threebody"],
+    default="twobody",
+    help="choose sine-gordon variant"
 )
 
 parser.add_argument(
@@ -216,6 +234,12 @@ def sample_domain_fn(batch_size: int,
 # -----------------------------------------------------------------------------
 
 # STDE using utilities from stde.operators
+<<<<<<< HEAD
+=======
+
+
+
+>>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 def hess_trace(fn: Callable) -> Callable:
     """Return a Hessian-trace estimator for ``fn``."""
 
@@ -269,6 +293,11 @@ def hess_trace(fn: Callable) -> Callable:
             return f_vals[0], trace_est, key
         else:
             raise ValueError(f"Unknown trace_method {args.trace_method}")
+<<<<<<< HEAD
+=======
+
+    return fn_trace
+>>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 
 def test_hess_trace_estimator():
     print("\n=== Testing STDE Hessian-Trace Estimator ===")
@@ -342,17 +371,25 @@ def SineGordon_op(x, u, key: jax.Array) -> Tuple[Float[Array, "xt_dim"], jax.Arr
 
 coeffs_ = np.random.randn(1, args.dim)
 
-
 eqn_cfg = EqnConfig(dim=args.dim, max_radius=args.x_radius)
 eqn_cfg.coeffs = coeffs_
 
+<<<<<<< HEAD
+eqn_cfg = EqnConfig(dim=args.dim, max_radius=args.x_radius)
+eqn_cfg.coeffs = coeffs_
+
+=======
+>>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 if args.problem == "twobody":
     sol_fn = lambda x: eq_twobody_sol(x, None, eqn_cfg)
     g_exact_fn = lambda x: SineGordon_twobody_inhomo_exact(x, eqn_cfg)
 else:
     sol_fn = lambda x: eq_threebody_sol(x, None, eqn_cfg)
     g_exact_fn = lambda x: SineGordon_threebody_inhomo_exact(x, eqn_cfg)
+<<<<<<< HEAD
 
+=======
+>>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 
 def SineGordon_res_fn(x, u, key) -> Float[Array, "xt_dim"]:
     r"""

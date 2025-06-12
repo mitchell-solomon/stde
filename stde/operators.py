@@ -133,13 +133,19 @@ def hess_diag(
     Float[Array, "xi_dim"],
     Float[Array, "xi_dim"],
   ]:
+    # extract the argument we want to differentiate with respect to
     x_i = xs[argnums]
+    # append an additional dimension if time is included in x_i
     dim = cfg.dim if not with_time else cfg.dim + 1
 
+    # create a partial function in which only x_i is a variable
     f_partial = partial_i(fn, argnums, *xs)
+    # indices of x_i along which the hessian diagonal is computed
     idx_set = get_sdgd_idx_set(cfg)
 
     if cfg.hess_diag_method == "folx":
+      # the folx package provides a forward-mode Laplacian operator
+      # that yields function value, gradient and trace of the Hessian
       assert not with_time
 
       fwd_f = forward_laplacian(f_partial)
@@ -147,8 +153,9 @@ def hess_diag(
       f_val = result.x
       f_x = result.jacobian.data
 
-      # HACK: folx only return hessian trace, whereas the current
-      # API returns all terms in the hessian diagonal
+      # HACK: folx only returns the Hessian trace.  The API of this
+      # function expects the full diagonal, so broadcast the trace
+      # value across all dimensions.
       f_lapl = result.laplacian
 
       d = cfg.rand_batch_size or cfg.dim
@@ -157,24 +164,29 @@ def hess_diag(
       return idx_set, f_val, f_x, f_xx
 
     if cfg.hess_diag_method == "dense_stde":
+      # compute Hessian-vector products using the jet API over
+      # randomly generated Hutchinson vectors
       taylor_2 = lambda v: jet.jet(
         fun=f_partial,
         primals=(x_i,),
         series=((v, jnp.zeros(dim)),),
       )
 
+      # generate random vectors on the sampled subset of dimensions
       rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg, with_time)
 
+      # evaluate the function and its Hessian-vector products
       f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_sub_vec)
       f_val = f_vals[0]
 
+      # average the Hutchinson estimators to obtain the trace estimate
       if not with_time:
         trace_est = jnp.mean(hvps)
       else:
         trace_est = jnp.mean(hvps[:-1])
 
-      # HACK: hte only return hessian trace, whereas the current
-      # API returns all terms in the hessian diagonal
+      # HACK: hte only returns the Hessian trace. Here we broadcast the
+      # trace estimate to form a diagonal vector.
       d = cfg.rand_batch_size or cfg.dim
 
       if not with_time:
@@ -182,20 +194,22 @@ def hess_diag(
       else:
         f_xx = trace_est * jnp.ones(d + 1) / d
         # add time derivative
-        f_xx = f_xx.at[-1].set(hvps[-1])
+        f_xx = f_xx.at[-1].set(hvps[-1])  # keep exact time second derivative
 
+      # compute gradient with respect to x_i
       f_x = jax.grad(f_partial)(x_i)
 
       return idx_set, f_val, f_x, f_xx
 
     if with_time:
       assert cfg.rand_batch_size == 0
-      # NOTE: make sure time dim is always sampled
+      # ensure the time dimension is always included in the sample
       idx_set = jnp.concatenate(
         [idx_set, jnp.array([cfg.dim], dtype=jnp.int32)]
       )
 
     if cfg.hess_diag_method == "sparse_stde":
+      # compute the Hessian diagonal explicitly one dimension at a time
       taylor_2 = lambda i: jet.jet(
         fun=f_partial,
         primals=(x_i,),
@@ -205,14 +219,18 @@ def hess_diag(
       f_val = f_vals[0]
 
       if cfg.rand_batch_size and cfg.apply_sampling_correction:
+        # correct for sub-sampling of the Hessian entries
         hess_diag_val *= dim / cfg.rand_batch_size
       if not cfg.rand_jac:
+        # evaluate the full gradient if it was not estimated jointly
         f_x = jax.grad(f_partial)(x_i)
       return idx_set, f_val, f_x, hess_diag_val
 
     hess_diag_val: Float[types.NPArray, "xi_dim"]
 
     if cfg.hess_diag_method == "forward":
+      # compute the Hessian diagonal using a forward-over-reverse
+      # approach which performs a jvp over a vjp
       f_val = f_partial(x_i)
       f_grad_fn = jax.grad(f_partial)
       f_x, f_hess_fn = jax.linearize(f_grad_fn, x_i)  # jvp over vjp
@@ -220,6 +238,8 @@ def hess_diag(
       hess_diag_val = jax.vmap(f_hess_diag_fn)(idx_set)
 
     elif cfg.hess_diag_method == "stacked":
+      # compute the Hessian diagonal by stacking reverse-mode Hessian
+      # vector products for each coordinate
       f_val = f_partial(x_i)
       f_grad_fn = jax.grad(f_partial)
       f_x = f_grad_fn(x_i)
@@ -227,8 +247,9 @@ def hess_diag(
       hess_diag_val = jax.vmap(f_hess_diag_fn)(idx_set)
 
     elif cfg.hess_diag_method == "scan":
-      # NOTE: this is slower than vmap. Also idx_set need to be jnp.array
-      # for tracing
+      # sequentially scan over dimensions. This is slower than vmap
+      # but avoids materializing the full Jacobian for large dim.
+      # idx_set must be a JAX array for tracing
       f_val = f_partial(x_i)
       f_grad_fn = jax.grad(f_partial)
       f_x = f_grad_fn(x_i)
@@ -241,11 +262,15 @@ def hess_diag(
       )
 
     else:
+      # unknown method specified
       raise ValueError
 
     if cfg.rand_batch_size and cfg.apply_sampling_correction:
+      # account for the fact that only a subset of dimensions was used
       hess_diag_val *= dim / cfg.rand_batch_size  # sampling correction
 
+    # return the sampled indices along with function value, gradient and
+    # estimated Hessian diagonal
     return idx_set, f_val, f_x, hess_diag_val
 
   return fn_hess_diag
