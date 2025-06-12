@@ -591,14 +591,15 @@ def main():
     # --- Plotting ---
 
 
-    def plot_sine_gordon_solution(x_flat, u_true, u_pred,
-                                dim: int = None,
-                                xlabel: str = 'x',
-                                ylabel: str = 'u',
-                                cmap: str = 'viridis'):
+    def plot_solution(x_flat, u_true, u_pred,
+                      dim: int = None,
+                      xlabel: str = 'x',
+                      ylabel: str = 'u',
+                      cmap: str = 'viridis',
+                      eqn_name: str = args.eqn_name):
         """
-        Plot true vs. predicted Sine–Gordon solutions.
-        If the embedding dimension D > 2, only the first two dims are used for plotting.
+        Plot true vs. predicted solutions for the chosen equation.
+        If the embedding dimension ``D`` > 2, only the first two dims are used for plotting.
         
         Args:
         x_flat:   array of shape (N, D) or (N,) for 1D
@@ -678,11 +679,12 @@ def main():
             raise ValueError("plot only supports 1D or 2D embeddings for visualization")
 
         # plt.tight_layout()
-        plt.savefig(f"{save_dir}/sine_gordon_solution.png", dpi=300)
+        plt.savefig(f"{save_dir}/{eqn_name}_solution.png", dpi=300)
         # plt.show()
 
-    def plot_all_sine_gordon_solutions(test_seqs, test_truths, params, mamba, dim=None,
-                                    xlabel='x', ylabel='u', cmap='viridis'):
+    def plot_all_solutions(test_seqs, test_truths, params, mamba, dim=None,
+                           xlabel='x', ylabel='u', cmap='viridis',
+                           eqn_name: str = args.eqn_name):
         """
         Run the model over every test batch, flatten, and plot true vs. predicted.
         
@@ -715,19 +717,20 @@ def main():
         u_pred_np  = np.array(u_pred)
 
         # now call the existing plot fn
-        plot_sine_gordon_solution(x_flat_np,
-                                u_true_np,
-                                u_pred_np,
-                                dim=dim,
-                                xlabel=xlabel,
-                                ylabel=ylabel,
-                                cmap=cmap)
-    
-    plot_all_sine_gordon_solutions(test_seqs,
-                               test_truths,
-                               state.params,
-                               mamba,
-                               dim=args.dim)
+        plot_solution(x_flat_np,
+                      u_true_np,
+                      u_pred_np,
+                      dim=dim,
+                      xlabel=xlabel,
+                      ylabel=ylabel,
+                      cmap=cmap,
+                      eqn_name=eqn_name)
+
+    plot_all_solutions(test_seqs,
+                       test_truths,
+                       state.params,
+                       mamba,
+                       dim=args.dim)
     def visualize_sequences(x_seq, x_ordering="none"):
         """
         Scatter‐plot each 2D “sequence” in x_seq, coloring by sequence index.
