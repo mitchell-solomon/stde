@@ -71,6 +71,20 @@ def hte(
   cfg: EqnConfig,
   argnums: int = 0,
 ) -> Callable:
+  """Return a function that estimates the Hessian trace of ``fn``.
+
+  The returned function evaluates ``fn`` and computes a Hutchinson
+  estimator of the trace of the Hessian with respect to the ``argnums``-th
+  argument.  Only a subset of coordinates is used when ``cfg.rand_batch_size``
+  is non‑zero.  The estimation relies on JAX's ``jet`` API to obtain
+  Hessian‑vector products.
+
+  Returns a callable ``f_trace(*xs)`` that outputs
+
+  ``idx_set`` : the sampled indices used for the estimator.
+  ``f_val``   : the scalar function value.
+  ``trace_est`` : the estimated Hessian trace.
+  """
 
   def fn_trace(
     *xs: Sequence[Float[types.NPArray, "xi_dim"]]
@@ -79,21 +93,32 @@ def hte(
     Float[Array, "1"],
     Float[Array, "1"],
   ]:
+    # Extract the argument we differentiate with respect to and
+    # record its dimension for creating zero-series terms below.
     x_i = xs[argnums]
     dim = cfg.dim
 
+    # Fix all other arguments so that ``f_partial`` depends only on ``x_i``.
     f_partial = partial_i(fn, argnums, *xs)
+
+    # Randomly select a subset of coordinates for the Hutchinson estimator.
     idx_set = get_sdgd_idx_set(cfg)
 
+    # Draw random vectors supported on ``idx_set``.
     rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg)
 
+    # Build a second-order Taylor expansion using ``jet`` to obtain
+    # Hessian-vector products for each random vector ``v``.
     taylor_2 = lambda v: jet.jet(
       fun=f_partial,
       primals=(x_i,),
       series=((v, jnp.zeros(dim)),),
     )
 
+    # Vectorize over the random vectors to compute all Hv products at once.
     f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_sub_vec)
+
+    # Average the Hutchinson estimates to approximate the Hessian trace.
     trace_est = jnp.mean(hvps)
 
     return idx_set, f_vals[0], trace_est
