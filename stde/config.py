@@ -5,6 +5,7 @@ from typing import Literal, Sequence
 from ml_collections import ConfigDict
 from pydantic.config import ConfigDict as PydanticConfigDict
 from pydantic.dataclasses import dataclass
+import numpy as np
 
 pydantic_config = PydanticConfigDict({"validate_assignment": True})
 
@@ -92,6 +93,8 @@ class EqnConfig:
   distribution X_t defined by the stochastic process."""
   unbiased: bool = False
   """whether to used unbiased gradient estimate"""
+  coeffs: np.ndarray = None
+  """coefficients for random coefficient PDEs"""
 
 
 @dataclass(config=pydantic_config)

@@ -1,12 +1,7 @@
 import inspect
 import pytest
-
-jax = pytest.importorskip('jax')
-jnp = pytest.importorskip('jax.numpy')
-hk = pytest.importorskip('haiku')
-# The equations module requires folx via stde.operators. Skip tests if folx
-# cannot be imported (e.g. due to missing jaxlib support).
-pytest.importorskip('folx')
+import jax
+import jax.numpy as jnp
 
 from stde.config import EqnConfig
 from stde.types import Equation
@@ -47,3 +42,11 @@ def test_equation_forms(name):
         u_fn = lambda x_, t_: eqn.sol(x_[None], t_ if t_ is None else t_[None], cfg)
         res = eqn.res(x[0], None if t is None else t[0], u_fn, cfg)
         assert jnp.allclose(res, 0.0, atol=1e-4)
+
+
+if __name__ == "__main__":
+    for name in EQUATION_NAMES:
+        test_equation_forms(name)
+        print(f"Test passed for {name}")
+    
+    print("All tests passed!")
