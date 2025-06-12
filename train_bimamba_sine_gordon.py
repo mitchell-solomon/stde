@@ -3,7 +3,7 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple, Optional, get_args
 
 import haiku as hk
 import jax
@@ -28,14 +28,8 @@ from pprint import pprint
 
 from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
 from stde.config import EqnConfig
-from stde.equations import (
-    twobody_sol as eq_twobody_sol,
-    SineGordon_twobody_inhomo_exact,
-    threebody_sol as eq_threebody_sol,
-    SineGordon_threebody_inhomo_exact,
-)
+from stde import equations as eqns
 
-from stde.operators import hess_diag
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -84,12 +78,13 @@ parser.add_argument(
     default="rademacher",
     help="distribution for dense STDE",
 )
+eqn_choices = get_args(EqnConfig.__annotations__["name"])
 parser.add_argument(
-    "--problem",
+    "--eqn_name",
     type=str,
-    choices=["twobody", "threebody"],
-    default="twobody",
-    help="choose sine-gordon variant",
+    choices=eqn_choices,
+    default="SineGordonTwobody",
+    help="PDE to solve",
 )
 
 # numberof bidirectional mamba blocks
@@ -231,55 +226,34 @@ def sample_domain_fn(batch_size: int,
 # Hessian‐trace estimator
 # -----------------------------------------------------------------------------
 
-# STDE using utilities from stde.operators
-
-def hess_trace(fn: Callable, cfg: EqnConfig) -> Callable:
-    """Return a Laplacian estimator for ``fn`` using :func:`hess_diag`."""
-
-    hd = hess_diag(fn, cfg, argnums=0, with_time=False)
-
-    def fn_trace(x_i):
-        _, f_val, _, hess_diag_val = hd(x_i)
-        trace_est = jnp.sum(hess_diag_val)
-        return f_val, trace_est
-
-    return fn_trace
-
-def SineGordon_op(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-    r"""
-    .. math::
-    \nabla u(x) + sin(u(x)) = g(x)
-    """
-    # run the Hessian‐trace estimator
-    u_, lap = hess_trace(u_fn, eqn_cfg)(x)
-    return lap + jnp.sin(u_)
-
 
 coeffs_ = np.random.randn(1, args.dim)
 
 eqn_cfg = EqnConfig(
+    name=args.eqn_name,
     dim=args.dim,
     max_radius=args.x_radius,
     rand_batch_size=args.rand_batch_size,
     hess_diag_method=args.hess_diag_method,
     stde_dist=args.stde_dist,
 )
-eqn_cfg.coeffs = coeffs_
-if args.problem == "twobody":
-    sol_fn = lambda x: eq_twobody_sol(x, None, eqn_cfg)
-    g_exact_fn = lambda x: SineGordon_twobody_inhomo_exact(x, eqn_cfg)
-else:
-    sol_fn = lambda x: eq_threebody_sol(x, None, eqn_cfg)
-    g_exact_fn = lambda x: SineGordon_threebody_inhomo_exact(x, eqn_cfg)
 
-def SineGordon_res_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-    r"""
-    .. math::
-    L u(x) = g(x)
-    """
-    Lu = SineGordon_op(x, u_fn)
-    g = g_exact_fn(x)
-    return Lu - g
+eqn = getattr(eqns, eqn_cfg.name)
+if eqn.random_coeff:
+    eqn_cfg.coeffs = coeffs_
+else:
+    eqn_cfg.coeffs = None
+
+if eqn.time_dependent:
+    raise NotImplementedError("Time-dependent PDEs are not supported")
+
+sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
+
+def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
+    res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
+    if isinstance(res, tuple):
+        res = res[0]
+    return res
 
 # -----------------------------------------------------------------------------
 # Training state
@@ -514,13 +488,8 @@ def main():
                     def u_fn(xi):
                         return y_at_l(xi, l, full_seq)
 
-                    # STDE Hessian-trace at x_l
-                    y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
-
-                    # analytic inhomogeneity
-                    g0 = g_exact_fn(x_l)
-
-                    return (lap + jnp.sin(y0) - g0), key
+                    res_val = residual_fn(x_l, u_fn)
+                    return res_val, key
 
                 # split into L subkeys, run across time steps
                 keys = jax.random.split(key, L)
