@@ -5,12 +5,13 @@ import json
 from functools import partial
 from typing import Callable, Tuple
 
+import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax.experimental import jet
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
+
 config.update("jax_enable_x64", True)
 import numpy as np
 
@@ -33,11 +34,7 @@ from stde.equations import (
     threebody_sol as eq_threebody_sol,
     SineGordon_threebody_inhomo_exact,
 )
-from stde.operators import hvp
-<<<<<<< HEAD
-=======
-
->>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
+from stde.operators import hte
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -65,37 +62,32 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--sparse', action="store_true",
-    help='whether to use sparse or dense stde'
+    "--hess_diag_method",
+    type=str,
+    choices=[
+        "stacked",
+        "forward",
+        "sparse_stde",
+        "dense_stde",
+        "scan",
+        "folx",
+    ],
+    default="sparse_stde",
+    help="method for computing the Hessian diagonal",
 )
 parser.add_argument(
-    "--trace_method",
+    "--stde_dist",
     type=str,
-    choices=["taylor", "hutchinson"],
-    default="taylor",
-    help="choose Hessian trace estimator"
-)
-parser.add_argument(
-    "--problem",
-    type=str,
-    choices=["twobody", "threebody"],
-    default="twobody",
-    help="choose sine-gordon variant"
-)
-
-parser.add_argument(
-    "--trace_method",
-    type=str,
-    choices=["taylor", "hutchinson"],
-    default="taylor",
-    help="choose Hessian trace estimator"
+    choices=["normal", "rademacher"],
+    default="rademacher",
+    help="distribution for dense STDE",
 )
 parser.add_argument(
     "--problem",
     type=str,
     choices=["twobody", "threebody"],
     default="twobody",
-    help="choose sine-gordon variant"
+    help="choose sine-gordon variant",
 )
 
 # numberof bidirectional mamba blocks
@@ -131,6 +123,10 @@ parser.add_argument("--run_name", type=str, default="test_run")
 
 args = parser.parse_args()
 pprint(args)
+
+# set up Haiku PRNG sequence for stde.operators
+rng_seq = hk.PRNGSequence(args.SEED)
+hk.next_rng_key = lambda: next(rng_seq)
 
 
 np.random.seed(args.SEED)
@@ -234,169 +230,51 @@ def sample_domain_fn(batch_size: int,
 # -----------------------------------------------------------------------------
 
 # STDE using utilities from stde.operators
-<<<<<<< HEAD
-=======
 
+def hess_trace(fn: Callable, cfg: EqnConfig) -> Callable:
+    """Return a Hessian-trace estimator for ``fn`` using :func:`hte`."""
 
+    ht = hte(fn, cfg, argnums=0)
 
->>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
-def hess_trace(fn: Callable) -> Callable:
-    """Return a Hessian-trace estimator for ``fn``."""
-
-    def fn_trace(x_i, key):
-        key, subkey = jax.random.split(key)
-
-        if args.trace_method == "hutchinson":
-            if args.sparse:
-                idx_set = jax.random.choice(
-                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
-                )
-
-                hvp_fn = lambda i: hvp(fn, x_i, jnp.eye(args.dim)[i])[i]
-                hvps = jax.vmap(hvp_fn)(idx_set)
-                trace_est = jnp.mean(hvps) * args.dim
-            else:
-                rand_vec = 2 * (
-                    jax.random.randint(
-                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
-                    )
-                    - 0.5
-                )
-
-                hvps = jax.vmap(lambda v: hvp(fn, x_i, v))(rand_vec)
-                trace_est = jnp.mean(jnp.einsum("ij,ij->i", rand_vec, hvps))
-
-            f_val = fn(x_i)
-            return f_val, trace_est, key
-
-        elif args.trace_method == "taylor":
-            if args.sparse:
-                idx_set = jax.random.choice(
-                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
-                )
-                rand_vec = jax.vmap(lambda i: jnp.eye(args.dim)[i])(idx_set)
-            else:
-                rand_vec = 2 * (
-                    jax.random.randint(
-                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
-                    )
-                    - 0.5
-                )
-
-            taylor_2 = lambda v: jet.jet(
-                fun=fn, primals=(x_i,), series=((v, jnp.zeros(args.dim)),)
-            )
-            f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_vec)
-            trace_est = jnp.mean(hvps)
-            if args.sparse:
-                trace_est *= args.dim
-            return f_vals[0], trace_est, key
-        else:
-            raise ValueError(f"Unknown trace_method {args.trace_method}")
-<<<<<<< HEAD
-=======
+    def fn_trace(x_i):
+        _, f_val, trace_est = ht(x_i)
+        return f_val, trace_est
 
     return fn_trace
->>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 
-def test_hess_trace_estimator():
-    print("\n=== Testing STDE Hessian-Trace Estimator ===")
-    key = jax.random.PRNGKey(args.SEED)
-
-    # simple test function f(x) = sum(x^2)  ⇒  Hessian = 2 I  ⇒  trace = 2 * D
-    D = args.dim
-    x = jnp.linspace(1.0, 2.0, D)
-
-    def f_fn(xi):
-        return jnp.sum(xi**2)
-
-    # assume you have hess_trace(fn)(x, key) -> (f(x), trace_estimate, new_key)
-    ht = hess_trace(f_fn)
-    fval, trace_est, _ = ht(x, key)
-
-    exact = 2.0 * D
-    print(f"  f(x) = {fval:.4f}, exact trace = {exact:.4f}, STDE estimate = {trace_est:.4f}")
-
-    # allow, say, 5% relative error on the Monte-Carlo estimate
-    assert jnp.allclose(trace_est, exact, rtol=0.05), (
-        f"STDE trace {trace_est} differs from exact {exact}"
-    )
-    print("STDE Hessian-Trace test passed!")
-
-# # Simple HTE
-# def hess_trace(fn: Callable) -> Callable:
-#     """
-#     Returns a function that, given x_i and an RNG key, returns
-#       ( f(x_i), trace(H_f)(x_i), next_key ).
-#     The trace is estimated via Hutchinson’s method using jax.jvp.
-#     """
-#     grad_fn = jax.grad(fn)
-
-#     def fn_trace(x_i, key):
-#         # split off a subkey for randomness
-#         key, subkey = jax.random.split(key)
-
-#         # draw a random Rademacher vector v
-#         # v = jax.random.rademacher(subkey, shape=x_i.shape)
-#         v = jax.random.normal(subkey, shape=x_i.shape)
-
-#         # compute H_f · v via jvp of the gradient
-#         hvp = jax.jvp(grad_fn, (x_i,), (v,))[1]
-
-#         # Hutchinson trace estimate: E[vᵀ(Hv)] = trace(H)
-#         trace_est = jnp.vdot(v, hvp)
-
-#         # if you want the sparse scaling you had before:
-#         if args.sparse:
-#             trace_est *= args.dim
-
-#         # finally evaluate f
-#         f_val = fn(x_i)
-#         return f_val, trace_est, key
-
-#     return fn_trace
-
-
-# test_hess_trace_estimator()
-
-def SineGordon_op(x, u, key: jax.Array) -> Tuple[Float[Array, "xt_dim"], jax.Array]:
+def SineGordon_op(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
     r"""
     .. math::
     \nabla u(x) + sin(u(x)) = g(x)
     """
     # run the Hessian‐trace estimator
-    u_, u_xx, key = hess_trace(u)(x, key)
-    return u_xx + jnp.sin(u_), key
+    u_, lap = hess_trace(u_fn, eqn_cfg)(x)
+    return lap + jnp.sin(u_)
 
 
 coeffs_ = np.random.randn(1, args.dim)
 
-eqn_cfg = EqnConfig(dim=args.dim, max_radius=args.x_radius)
+eqn_cfg = EqnConfig(
+    dim=args.dim,
+    max_radius=args.x_radius,
+    rand_batch_size=args.rand_batch_size,
+    hess_diag_method=args.hess_diag_method,
+    stde_dist=args.stde_dist,
+)
 eqn_cfg.coeffs = coeffs_
-
-<<<<<<< HEAD
-eqn_cfg = EqnConfig(dim=args.dim, max_radius=args.x_radius)
-eqn_cfg.coeffs = coeffs_
-
-=======
->>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
 if args.problem == "twobody":
     sol_fn = lambda x: eq_twobody_sol(x, None, eqn_cfg)
     g_exact_fn = lambda x: SineGordon_twobody_inhomo_exact(x, eqn_cfg)
 else:
     sol_fn = lambda x: eq_threebody_sol(x, None, eqn_cfg)
     g_exact_fn = lambda x: SineGordon_threebody_inhomo_exact(x, eqn_cfg)
-<<<<<<< HEAD
 
-=======
->>>>>>> 5fec43e083c296c636a0eaa1d04090b00469f9e5
-
-def SineGordon_res_fn(x, u, key) -> Float[Array, "xt_dim"]:
+def SineGordon_res_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
     r"""
     .. math::
     L u(x) = g(x)
     """
-    Lu = SineGordon_op(x, u, key)
+    Lu = SineGordon_op(x, u_fn)
     g = g_exact_fn(x)
     return Lu - g
 
@@ -594,34 +472,26 @@ def main():
                 return y2[l]
 
             # 4) compute the vector of residuals for one sequence
-            def residuals_for_one_sequence(full_seq, key):
-                L = full_seq.shape[0]
+        def residuals_for_one_sequence(full_seq):
+            L = full_seq.shape[0]
 
-                def one_step_res(l, x_l, key):
-                    # build a u_fn that closes over `params` and this full_seq
-                    def u_fn(xi):
-                        return y_at_l(xi, l, full_seq)
+            def one_step_res(l, x_l):
+                # build a u_fn that closes over `params` and this full_seq
+                def u_fn(xi):
+                    return y_at_l(xi, l, full_seq)
 
-                    # STDE Hessian-trace at x_l
-                    y0, lap, key = hess_trace(u_fn)(x_l, key)
+                # STDE Hessian-trace at x_l
+                y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
 
-                    # analytic inhomogeneity
-                    g0 = g_exact_fn(x_l)
+                # analytic inhomogeneity
+                g0 = g_exact_fn(x_l)
 
-                    return (lap + jnp.sin(y0) - g0), key
+                return lap + jnp.sin(y0) - g0
 
-                # split into L subkeys, run across time steps
-                keys = jax.random.split(key, L)
-                resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
-                    jnp.arange(L), full_seq, keys
-                )
-                return resids, _
+            resids = jax.vmap(one_step_res)(jnp.arange(L), full_seq)
+            return resids
 
-            # 5) vectorize over the B sequences in the batch
-            outer_keys = jax.random.split(batch_rng, x_seq.shape[0])
-            all_resids, _ = jax.vmap(
-                residuals_for_one_sequence, in_axes=(0, 0), out_axes=(0, 0)
-            )(x_seq, outer_keys)  # all_resids shape: (B, L)
+        all_resids = jax.vmap(residuals_for_one_sequence)(x_seq)  # (B, L)
 
             # 6) mean-squared residual loss
             loss = jnp.mean(all_resids ** 2)
