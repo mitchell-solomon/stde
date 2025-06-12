@@ -292,6 +292,9 @@ if eqn.random_coeff:
 else:
     eqn_cfg.coeffs = None
 
+# sampler for boundary points using equation-specific sampling
+sample_boundary_fn = eqn.get_sample_domain_fn(eqn_cfg)
+
 if eqn.time_dependent:
     raise NotImplementedError("Time-dependent PDEs are not supported")
 
@@ -346,13 +349,10 @@ def main():
         custom_vjp_scan     = args.custom_vjp_scan,
         activation           = args.ssm_activation,
     )
-    class ZeroOnUnitBall(nn.Module):
-        @nn.compact
-        def __call__(self, x_in, u_val, radius=1.0):
-            return (radius**2 - jnp.sum(x_in**2, -1)) * u_val
-    
     # make a class for the PINN, which is a stack of Bi-MAMBA blocks
     class BiMambaPINN(nn.Module):
+        eqn: eqns.Equation
+        eqn_cfg: EqnConfig
         @nn.compact
         def __call__(self, x):
             # Ensure input shape is (B, L, D)
@@ -368,7 +368,9 @@ def main():
             x_out = nn.Dense(args.dense_expansion*D, name="mlp", kernel_init=nn.initializers.lecun_normal())(x)
             x_out = nn.gelu(x_out)
             x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out) # (B, L, D) --> (B, L, 1)
-            x_out = ZeroOnUnitBall(name="zero_unit_ball")(x_in, x_out.squeeze(-1), radius=args.x_radius)
+            x_out = x_out.squeeze(-1)
+            # enforce PDE-specific boundary condition
+            x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
 
             return x_out
 
@@ -400,7 +402,7 @@ def main():
             )(x))
 
     # And then proceed to instantiate your model as before:
-    mamba = BiMambaPINN()
+    mamba = BiMambaPINN(eqn=eqn, eqn_cfg=eqn_cfg)
 
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)
@@ -556,7 +558,21 @@ def main():
             )(x_seq, outer_keys)  # all_resids shape: (B, L)
 
             # 6) mean-squared residual loss
-            loss = jnp.mean(all_resids ** 2)
+            domain_loss = jnp.mean(all_resids ** 2)
+
+            # 7) boundary loss using equation-specific boundary conditions
+            _, _, x_b, t_b, batch_rng = sample_boundary_fn(
+                rand_batch_size, rand_batch_size, batch_rng
+            )
+            u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
+            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
+            boundary_loss = jnp.mean((g_b - u_b) ** 2)
+
+            loss = (
+                eqn_cfg.domain_weight * domain_loss
+                + eqn_cfg.boundary_weight * boundary_loss
+            )
+            new_rng = batch_rng
             return loss, new_rng
 
         # inside your jitted train_step
