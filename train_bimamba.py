@@ -48,7 +48,7 @@ def count_params(params):
 
 def save_params(params, step: int, save_dir: str, save_every: int, epochs: int):
     if step == 0:
-        with open(os.path.join(save_dir, "config.txt"), "w") as f:
+        with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(vars(args), f, indent=2)
     if (step + 1) != epochs and step % save_every != 0:
         return
@@ -184,11 +184,6 @@ fh.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(fh)
 logger.addHandler(logging.StreamHandler())
 tqdm_out = TqdmToLogger(logger)
-
-# save args as a json file to save dir
-with open(f"{save_dir}/args.json", "w") as f:
-    json.dump(vars(args), f, indent=2)
-
 
 # -----------------------------------------------------------------------------
 # Domain sampler: can return single points or time sequences of points
