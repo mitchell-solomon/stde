@@ -34,7 +34,9 @@ from stde.equations import (
     threebody_sol as eq_threebody_sol,
     SineGordon_threebody_inhomo_exact,
 )
+
 from stde.operators import hess_diag
+
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -503,6 +505,7 @@ def main():
                 return y2[l]
 
             # 4) compute the vector of residuals for one sequence
+
             def residuals_for_one_sequence(full_seq, key):
                 L = full_seq.shape[0]
 
