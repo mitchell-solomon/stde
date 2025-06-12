@@ -1,8 +1,9 @@
 import pytest
 
-jax = pytest.importorskip('jax')
-jnp = pytest.importorskip('jax.numpy')
-hk = pytest.importorskip('haiku')
+import jax
+import jax.numpy as jnp
+import haiku as hk
+import folx
 
 from stde.config import EqnConfig
 from stde.operators import get_hutchinson_random_vec, get_sdgd_idx_set
