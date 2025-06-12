@@ -68,6 +68,13 @@ parser.add_argument(
     help='whether to use sparse or dense stde'
 )
 parser.add_argument(
+    "--trace_method",
+    type=str,
+    choices=["taylor", "hutchinson"],
+    default="taylor",
+    help="choose Hessian trace estimator"
+)
+parser.add_argument(
     "--problem",
     type=str,
     choices=["twobody", "threebody"],
@@ -213,33 +220,60 @@ def sample_domain_fn(batch_size: int,
 # STDE using utilities from stde.operators
 
 
+
 def hess_trace(fn: Callable) -> Callable:
-    """Return a Hessian-trace estimator for ``fn`` using Hutchinson's method."""
+    """Return a Hessian-trace estimator for ``fn``."""
 
     def fn_trace(x_i, key):
         key, subkey = jax.random.split(key)
 
-        if args.sparse:
-            idx_set = jax.random.choice(
-                subkey, args.dim, shape=(args.rand_batch_size,), replace=True
-            )
-
-            hvp_fn = lambda i: hvp(fn, x_i, jnp.eye(args.dim)[i])[i]
-            hvps = jax.vmap(hvp_fn)(idx_set)
-            trace_est = jnp.mean(hvps) * args.dim
-        else:
-            rand_vec = 2 * (
-                jax.random.randint(
-                    subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
+        if args.trace_method == "hutchinson":
+            if args.sparse:
+                idx_set = jax.random.choice(
+                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
                 )
-                - 0.5
+
+                hvp_fn = lambda i: hvp(fn, x_i, jnp.eye(args.dim)[i])[i]
+                hvps = jax.vmap(hvp_fn)(idx_set)
+                trace_est = jnp.mean(hvps) * args.dim
+            else:
+                rand_vec = 2 * (
+                    jax.random.randint(
+                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
+                    )
+                    - 0.5
+                )
+
+                hvps = jax.vmap(lambda v: hvp(fn, x_i, v))(rand_vec)
+                trace_est = jnp.mean(jnp.einsum("ij,ij->i", rand_vec, hvps))
+
+            f_val = fn(x_i)
+            return f_val, trace_est, key
+
+        elif args.trace_method == "taylor":
+            if args.sparse:
+                idx_set = jax.random.choice(
+                    subkey, args.dim, shape=(args.rand_batch_size,), replace=True
+                )
+                rand_vec = jax.vmap(lambda i: jnp.eye(args.dim)[i])(idx_set)
+            else:
+                rand_vec = 2 * (
+                    jax.random.randint(
+                        subkey, shape=(args.rand_batch_size, args.dim), minval=0, maxval=2
+                    )
+                    - 0.5
+                )
+
+            taylor_2 = lambda v: jet.jet(
+                fun=fn, primals=(x_i,), series=((v, jnp.zeros(args.dim)),)
             )
-
-            hvps = jax.vmap(lambda v: hvp(fn, x_i, v))(rand_vec)
-            trace_est = jnp.mean(jnp.einsum("ij,ij->i", rand_vec, hvps))
-
-        f_val = fn(x_i)
-        return f_val, trace_est, key
+            f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_vec)
+            trace_est = jnp.mean(hvps)
+            if args.sparse:
+                trace_est *= args.dim
+            return f_vals[0], trace_est, key
+        else:
+            raise ValueError(f"Unknown trace_method {args.trace_method}")
 
     return fn_trace
 
