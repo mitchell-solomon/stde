@@ -3,7 +3,7 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 
 import haiku as hk
 import jax
@@ -348,6 +348,33 @@ def main():
 
             return x_out
 
+        def tabulate_model(self,
+                           n_pts: int = 4,
+                           dim: int = args.dim,
+                           radius: float = args.x_radius,
+                           seq_len: int = args.seq_len,
+                           rng: Optional[jax.Array] = None):
+            """Print a tabulated summary of the model architecture."""
+
+            if rng is None:
+                rng = jax.random.PRNGKey(0)
+
+            x, _ = sample_domain_fn(
+                batch_size=n_pts,
+                rng=rng,
+                radius=radius,
+                dim=dim,
+                seq_len=seq_len,
+                sampling_mode=args.sampling_mode,
+                x_ordering=args.x_ordering,
+            )
+
+            print(nn.tabulate(
+                self,
+                rngs={"params": rng},
+                mutable=["params", "diagnostics", "intermediates"],
+            )(x))
+
     # And then proceed to instantiate your model as before:
     mamba = BiMambaPINN()
 
@@ -365,6 +392,9 @@ def main():
     # print input and output shapes
     print("Input shape:", x_dummy.shape)
     print("Output shape:", mamba.apply(flax_vars, x_dummy).shape)
+
+    # Tabulate the model architecture for reference
+    mamba.tabulate_model()
     
     # init exponential decay learning rate schedule
     
