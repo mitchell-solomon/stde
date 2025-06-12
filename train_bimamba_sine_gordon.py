@@ -328,7 +328,7 @@ def main():
             return (radius**2 - jnp.sum(x_in**2, -1)) * u_val
     
     # make a class for the PINN, which is a stack of Bi-MAMBA blocks
-    class PINN(nn.Module):
+    class BiMambaPINN(nn.Module):
         @nn.compact
         def __call__(self, x):
             # Ensure input shape is (B, L, D)
@@ -349,7 +349,7 @@ def main():
             return x_out
 
     # And then proceed to instantiate your model as before:
-    mamba = PINN()
+    mamba = BiMambaPINN()
 
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)
