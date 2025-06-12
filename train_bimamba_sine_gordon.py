@@ -34,7 +34,7 @@ from stde.equations import (
     threebody_sol as eq_threebody_sol,
     SineGordon_threebody_inhomo_exact,
 )
-from stde.operators import hte
+from stde.operators import hess_diag
 # -----------------------------------------------------------------------------
 # CLI arguments
 # -----------------------------------------------------------------------------
@@ -472,26 +472,34 @@ def main():
                 return y2[l]
 
             # 4) compute the vector of residuals for one sequence
-        def residuals_for_one_sequence(full_seq):
-            L = full_seq.shape[0]
+            def residuals_for_one_sequence(full_seq, key):
+                L = full_seq.shape[0]
 
-            def one_step_res(l, x_l):
-                # build a u_fn that closes over `params` and this full_seq
-                def u_fn(xi):
-                    return y_at_l(xi, l, full_seq)
+                def one_step_res(l, x_l, key):
+                    # build a u_fn that closes over `params` and this full_seq
+                    def u_fn(xi):
+                        return y_at_l(xi, l, full_seq)
 
-                # STDE Hessian-trace at x_l
-                y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
+                    # STDE Hessian-trace at x_l
+                    y0, lap = hess_trace(u_fn, eqn_cfg)(x_l)
 
-                # analytic inhomogeneity
-                g0 = g_exact_fn(x_l)
+                    # analytic inhomogeneity
+                    g0 = g_exact_fn(x_l)
 
-                return lap + jnp.sin(y0) - g0
+                    return (lap + jnp.sin(y0) - g0), key
 
-            resids = jax.vmap(one_step_res)(jnp.arange(L), full_seq)
-            return resids
+                # split into L subkeys, run across time steps
+                keys = jax.random.split(key, L)
+                resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
+                    jnp.arange(L), full_seq, keys
+                )
+                return resids, _
 
-        all_resids = jax.vmap(residuals_for_one_sequence)(x_seq)  # (B, L)
+            # 5) vectorize over the B sequences in the batch
+            outer_keys = jax.random.split(batch_rng, x_seq.shape[0])
+            all_resids, _ = jax.vmap(
+                residuals_for_one_sequence, in_axes=(0, 0), out_axes=(0, 0)
+            )(x_seq, outer_keys)  # all_resids shape: (B, L)
 
             # 6) mean-squared residual loss
             loss = jnp.mean(all_resids ** 2)
@@ -504,6 +512,7 @@ def main():
         state = state.apply_gradients(grads=grads, rng=new_rng)
 
         return state, loss, grads
+    
     losses = []
     for step in tqdm(range(args.epochs), desc="training"):
         # let train_step now return (new_state, train_loss, grads)
