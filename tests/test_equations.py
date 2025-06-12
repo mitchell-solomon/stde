@@ -3,6 +3,10 @@ import pytest
 import jax
 import jax.numpy as jnp
 
+import jax
+import jax.numpy as jnp
+import haiku as hk
+import folx
 from stde.config import EqnConfig
 from stde.types import Equation
 import stde.equations as equations

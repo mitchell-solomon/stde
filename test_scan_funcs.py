@@ -2,10 +2,9 @@ import numpy as np
 import time
 import math
 from functools import partial
-import pytest
-einops = pytest.importorskip('einops')
-jax = pytest.importorskip('jax')
-jnp = pytest.importorskip('jax.numpy')
+import einops
+import jax
+import jax.numpy as jnp
 from jax import custom_vjp, jit
 from jax.experimental.jet import jet
 from jax import config
