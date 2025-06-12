@@ -2,6 +2,9 @@
 import argparse
 import os
 import json
+import io
+import logging
+import pickle
 from functools import partial
 from typing import Callable, Tuple, Optional, get_args
 
@@ -21,6 +24,36 @@ import flax.linen as nn
 
 import optax
 from tqdm import tqdm
+
+class TqdmToLogger(io.StringIO):
+    """Redirect tqdm output to logging."""
+
+    def __init__(self, logger, level=logging.INFO):
+        super().__init__()
+        self.logger = logger
+        self.level = level
+        self.buf = ""
+
+    def write(self, buf):
+        self.buf = buf.strip("\r\n\t ")
+
+    def flush(self):
+        self.logger.log(self.level, self.buf)
+
+
+def count_params(params):
+    flat = jax.tree_util.tree_leaves(params)
+    return int(sum(np.prod(p.shape) for p in flat))
+
+
+def save_params(params, step: int, save_dir: str, save_every: int, epochs: int):
+    if step == 0:
+        with open(os.path.join(save_dir, "config.txt"), "w") as f:
+            json.dump(vars(args), f, indent=2)
+    if (step + 1) != epochs and step % save_every != 0:
+        return
+    with open(os.path.join(save_dir, f"params_{step}.pkl"), "wb") as f:
+        pickle.dump(params, f)
 
 import matplotlib.pyplot as plt
 from pprint import pprint
@@ -116,6 +149,10 @@ parser.add_argument("--ssm_activation", type=str, default="silu", choices=["silu
 
 # -- run arguments --
 parser.add_argument("--run_name", type=str, default="test_run")
+parser.add_argument("--save_every", type=int, default=10000,
+                    help="save parameters every n steps")
+parser.add_argument("--get_mem", action="store_true",
+                    help="measure GPU memory usage")
 
 args = parser.parse_args()
 
@@ -135,6 +172,18 @@ np.random.seed(args.SEED)
 # create a dir with the run name where we save all results
 save_dir = f"_results/{args.run_name}"
 os.makedirs(save_dir, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# logging setup
+# ---------------------------------------------------------------------------
+log_file = os.path.join(save_dir, "train.log")
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler(log_file, mode="w")
+fh.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(fh)
+logger.addHandler(logging.StreamHandler())
+tqdm_out = TqdmToLogger(logger)
 
 # save args as a json file to save dir
 with open(f"{save_dir}/args.json", "w") as f:
@@ -405,6 +454,9 @@ def main():
         tx=optimizer,
         rng=rng_train,
     )
+    num_params = count_params(state.params)
+    logger.info(f"num params: {num_params}")
+    gpu_mems = [0.0]
 
     # prepare test set (once)
     n_test_batches = args.N_test // args.test_batch_size
@@ -521,36 +573,51 @@ def main():
         return state, loss, grads
     
     losses = []
-    for step in tqdm(range(args.epochs), desc="training"):
-        # let train_step now return (new_state, train_loss, grads)
+    iters = tqdm(range(args.epochs), file=tqdm_out)
+    for step in iters:
         state, train_loss, grads = train_step(state)
-        losses.append(train_loss)
-
+        losses.append(float(train_loss))
 
         if step % args.eval_every == 0:
-            # compute relative test errors
-            l1_total, l2_total_sqr = 0., 0.
+            l1_total, l2_total_sqr = 0.0, 0.0
             for b in range(test_seqs.shape[0]):
                 x_seq = test_seqs[b]
-                y_true = test_truths[b]        # (B, L)
-                y_pred = mamba.apply({"params": state.params}, x_seq) # .squeeze(-1)
+                y_true = test_truths[b]
+                y_pred = mamba.apply({"params": state.params}, x_seq)
                 err = y_pred - y_true
                 l1_total += jnp.sum(jnp.abs(err))
                 l2_total_sqr += jnp.sum(err**2)
             l1_rel = float(l1_total / y_true_l1)
             l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
 
-            # gradient norm
-            grad_norm = jnp.sqrt(
+            grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
-            )
+            ))
 
-            print(f"step={step:4d} | "
-                f"train_loss={train_loss:.3e} | "
-                f"grad_norm={grad_norm:.3e} | "
-                f"l1_rel={l1_rel:.3e} | "
-                f"l2_rel={l2_rel:.3e}")
-    
+            desc_str = (
+                f"l1_rel={l1_rel:.2e} | l2_rel={l2_rel:.2e} | "
+                f"loss={train_loss:.2e} | grad_norm={grad_norm:.2e}"
+            )
+            iters.set_description(desc_str)
+            logger.info(desc_str)
+
+            if args.get_mem and step == 100:
+                mem_stats = jax.local_devices()[0].memory_stats()
+                peak_mem = mem_stats['peak_bytes_in_use'] / 1024**2
+                gpu_mems.append(peak_mem)
+                break
+
+        if step % args.save_every == 0:
+            save_params(state.params, step, save_dir, args.save_every, args.epochs)
+
+    # read iter/s from log file
+    try:
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+        iter_per_s = float(lines[-3].strip().split(', ')[-1].split('it/s')[0])
+    except Exception:
+        iter_per_s = 0.0
+
     # --- Plot training loss curve ---
     plt.plot(losses)
     plt.yscale('log')
@@ -580,11 +647,14 @@ def main():
     l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
     print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
 
-    # save final eval results to a json file
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
         json.dump({
             "l1_rel": l1_rel,
-            "l2_rel": l2_rel
+            "l2_rel": l2_rel,
+            "iter_per_s": iter_per_s,
+            "peak_gpu_mem": max(gpu_mems),
+            "num_params": num_params,
+            "final_loss": float(losses[-1]) if losses else 0.0
         }, f, indent=2)
 
 
