@@ -3,7 +3,7 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Callable, Tuple, Any
+from typing import Callable, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -29,10 +29,8 @@ from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConf
 from stde.config import EqnConfig
 from stde.equations import (
     twobody_sol as eq_twobody_sol,
-    twobody_lapl_analytical,
     SineGordon_twobody_inhomo_exact,
     threebody_sol as eq_threebody_sol,
-    threebody_lapl_analytical,
     SineGordon_threebody_inhomo_exact,
 )
 from stde.operators import hvp
