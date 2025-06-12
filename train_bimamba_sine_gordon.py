@@ -232,12 +232,13 @@ def sample_domain_fn(batch_size: int,
 # STDE using utilities from stde.operators
 
 def hess_trace(fn: Callable, cfg: EqnConfig) -> Callable:
-    """Return a Hessian-trace estimator for ``fn`` using :func:`hte`."""
+    """Return a Laplacian estimator for ``fn`` using :func:`hess_diag`."""
 
-    ht = hte(fn, cfg, argnums=0)
+    hd = hess_diag(fn, cfg, argnums=0, with_time=False)
 
     def fn_trace(x_i):
-        _, f_val, trace_est = ht(x_i)
+        _, f_val, _, hess_diag_val = hd(x_i)
+        trace_est = jnp.sum(hess_diag_val)
         return f_val, trace_est
 
     return fn_trace
