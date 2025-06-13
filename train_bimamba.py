@@ -71,7 +71,19 @@ parser = argparse.ArgumentParser(description="PINN Training with Bi-MAMBA")
 
 # -- existing args --
 parser.add_argument("--SEED", type=int, default=0)
-parser.add_argument("--dim", type=int, default=2, help="spatial dimension of the problem")
+parser.add_argument(
+    "--dim",
+    dest="spatial_dim",
+    type=int,
+    default=2,
+    help="number of spatial dimensions of the problem",
+)
+parser.add_argument(
+    "--spatial_dim",
+    type=int,
+    dest="spatial_dim",
+    help=argparse.SUPPRESS,
+)
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--eval_every", type=int, default=10000000)
 parser.add_argument("--lr", type=float, default=1e-3)
@@ -157,7 +169,7 @@ parser.add_argument("--get_mem", action="store_true",
 args = parser.parse_args()
 
 # derive rand_batch_size from dimension (order of magnitude lower)
-rand_batch_size = max(1, args.dim // 10)
+rand_batch_size = max(1, args.spatial_dim // 10)
 args.rand_batch_size = rand_batch_size
 
 pprint(args)
@@ -226,11 +238,11 @@ def sample_domain_seq_fn(
 # -----------------------------------------------------------------------------
 
 
-coeffs_ = np.random.randn(1, args.dim)
+coeffs_ = np.random.randn(1, args.spatial_dim)
 
 eqn_cfg = EqnConfig(
     name=args.eqn_name,
-    dim=args.dim,
+    dim=args.spatial_dim,
     max_radius=args.x_radius,
     rand_batch_size=rand_batch_size,
     hess_diag_method=args.hess_diag_method,
@@ -248,11 +260,13 @@ sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
 sample_boundary_fn = sample_domain_fn
 
 if eqn.time_dependent:
-    sol_fn = lambda xt: eqn.sol(xt[..., :args.dim], xt[..., args.dim:], eqn_cfg)
+    sol_fn = lambda xt: eqn.sol(
+        xt[..., : args.spatial_dim], xt[..., args.spatial_dim :], eqn_cfg
+    )
 
     def residual_fn(xt, u_fn: Callable) -> Float[Array, "xt_dim"]:
-        x_part = xt[..., :args.dim]
-        t_part = xt[..., args.dim:]
+        x_part = xt[..., : args.spatial_dim]
+        t_part = xt[..., args.spatial_dim :]
         res = eqn.res(
             x_part,
             t_part,
@@ -336,7 +350,7 @@ def main():
             x_out = x_out.squeeze(-1)
             # enforce PDE-specific boundary condition
             if self.eqn.time_dependent:
-                x_part, t_part = x_in[..., :args.dim], x_in[..., args.dim:]
+                x_part, t_part = x_in[..., : args.spatial_dim], x_in[..., args.spatial_dim :]
                 x_out = self.eqn.enforce_boundary(x_part, t_part, x_out, self.eqn_cfg)
             else:
                 x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
@@ -345,7 +359,7 @@ def main():
 
         def tabulate_model(self,
                            n_pts: int = 4,
-                           dim: int = args.dim,
+                           dim: int = args.spatial_dim,
                            radius: float = args.x_radius,
                            seq_len: int = args.seq_len,
                            rng: Optional[jax.Array] = None):
@@ -451,7 +465,7 @@ def main():
         y_true_l2 = float(jnp.linalg.norm(y_true_all))
     else:
         # reference value only defined at x=0,t=0
-        y_ref = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        y_ref = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         y_true_l1 = jnp.abs(y_ref)
         y_true_l2 = jnp.abs(y_ref)
 
@@ -565,9 +579,11 @@ def main():
                 l1_rel = float(l1_total / y_true_l1)
                 l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
             else:
-                xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+                xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
                 y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
-                y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+                y_true = eqn.sol(
+                    jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg
+                )
                 l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
                 l2_rel = l1_rel
 
@@ -629,9 +645,9 @@ def main():
         l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
         print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
     else:
-        xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+        xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
         y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
-        y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
         l2_rel = l1_rel
         print(f"Final → l1_rel={l1_rel:.3e}")
@@ -814,7 +830,7 @@ def main():
                            test_truths,
                            state.params,
                            mamba,
-                           dim=args.dim)
+                           dim=args.spatial_dim)
     def visualize_sequences(x_seq, x_ordering="none"):
         """
         Scatter‐plot each 2D “sequence” in x_seq, coloring by sequence index.
