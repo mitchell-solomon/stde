@@ -198,10 +198,27 @@ def sample_domain_seq_fn(
     rng: jax.Array,
     seq_len: int,
 ) -> Tuple[jnp.ndarray, jax.Array]:
-    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences."""
+    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
 
-    x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+    If the equation is time dependent, the returned sequence dimension
+    corresponds to the temporal axis. The sampled ``x`` and ``t`` are
+    concatenated such that the model receives ``(x, t)`` as features.
+    """
+
+    if eqn.is_traj:
+        x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+    else:
+        x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+
+    # reshape to sequences
     x_seq = x.reshape((batch_size, seq_len, -1))
+    if eqn.time_dependent and t is not None:
+        t_seq = t.reshape((batch_size, seq_len, -1))
+        # order each sequence by increasing time so that seq axis is temporal
+        sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+        x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+        t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+        x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
     return x_seq, rng
 
 # -----------------------------------------------------------------------------
@@ -231,15 +248,28 @@ sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
 sample_boundary_fn = sample_domain_fn
 
 if eqn.time_dependent:
-    raise NotImplementedError("Time-dependent PDEs are not supported")
+    sol_fn = lambda xt: eqn.sol(xt[..., :args.dim], xt[..., args.dim:], eqn_cfg)
 
-sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
+    def residual_fn(xt, u_fn: Callable) -> Float[Array, "xt_dim"]:
+        x_part = xt[..., :args.dim]
+        t_part = xt[..., args.dim:]
+        res = eqn.res(
+            x_part,
+            t_part,
+            lambda xi, ti: u_fn(jnp.concatenate([xi, ti], axis=-1)),
+            eqn_cfg,
+        )
+        if isinstance(res, tuple):
+            res = res[0]
+        return res
+else:
+    sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
 
-def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-    res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
-    if isinstance(res, tuple):
-        res = res[0]
-    return res
+    def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
+        res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
+        if isinstance(res, tuple):
+            res = res[0]
+        return res
 
 # -----------------------------------------------------------------------------
 # Training state
@@ -302,10 +332,14 @@ def main():
             
             x_out = nn.Dense(args.dense_expansion*D, name="mlp", kernel_init=nn.initializers.lecun_normal())(x)
             x_out = nn.gelu(x_out)
-            x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out) # (B, L, D) --> (B, L, 1)
+            x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)  # (B, L, D) --> (B, L, 1)
             x_out = x_out.squeeze(-1)
             # enforce PDE-specific boundary condition
-            x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
+            if self.eqn.time_dependent:
+                x_part, t_part = x_in[..., :args.dim], x_in[..., args.dim:]
+                x_out = self.eqn.enforce_boundary(x_part, t_part, x_out, self.eqn_cfg)
+            else:
+                x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
 
             return x_out
 
@@ -385,34 +419,41 @@ def main():
     gpu_mems = [0.0]
 
     # prepare test set (once)
-    n_test_batches = args.N_test // args.test_batch_size
-    test_seqs = []
-    test_truths = []
+    test_seqs = test_truths = None
+    if not eqn.is_traj:
+        n_test_batches = args.N_test // args.test_batch_size
+        test_seqs = []
+        test_truths = []
 
-    for _ in range(n_test_batches):
-        rng_test, sample_rng = jax.random.split(rng_test)
-        x_test_seq, _ = sample_domain_seq_fn(
-            batch_size=args.test_batch_size,
-            rng=sample_rng,
-            seq_len=args.seq_len,
-        )
-        # collapse batch & seq dims to analytical solver
-        B, L, D = x_test_seq.shape
-        x_flat = x_test_seq.reshape((B * L, D))
-        y_flat = jax.vmap(sol_fn)(x_flat)
-        test_seqs.append(x_test_seq)
-        test_truths.append(y_flat.reshape((B, L)))
-    test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
-    test_truths = jnp.stack(test_truths)   # (n_batches, B, L)
-    
-    # flatten all test ground-truth values into a single vector
-    y_true_all = test_truths.reshape(-1)  
+        for _ in range(n_test_batches):
+            rng_test, sample_rng = jax.random.split(rng_test)
+            x_test_seq, _ = sample_domain_seq_fn(
+                batch_size=args.test_batch_size,
+                rng=sample_rng,
+                seq_len=args.seq_len,
+            )
+            # collapse batch & seq dims to analytical solver
+            B, L, D = x_test_seq.shape
+            x_flat = x_test_seq.reshape((B * L, D))
+            y_flat = jax.vmap(sol_fn)(x_flat)
+            test_seqs.append(x_test_seq)
+            test_truths.append(y_flat.reshape((B, L)))
+        test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
+        test_truths = jnp.stack(test_truths)   # (n_batches, B, L)
 
-    # L1 norm of the entire test set
-    y_true_l1 = float(jnp.sum(jnp.abs(y_true_all)))     
+        # flatten all test ground-truth values into a single vector
+        y_true_all = test_truths.reshape(-1)
 
-    # L2 norm of the entire test set
-    y_true_l2 = float(jnp.linalg.norm(y_true_all))   
+        # L1 norm of the entire test set
+        y_true_l1 = float(jnp.sum(jnp.abs(y_true_all)))
+
+        # L2 norm of the entire test set
+        y_true_l2 = float(jnp.linalg.norm(y_true_all))
+    else:
+        # reference value only defined at x=0,t=0
+        y_ref = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        y_true_l1 = jnp.abs(y_ref)
+        y_true_l2 = jnp.abs(y_ref)
 
     @jax.jit
     def train_step(state: MambaTrainState) -> MambaTrainState:
@@ -443,9 +484,9 @@ def main():
             )  # x_seq shape: (B, L, D)
 
             # 3) helper: model output at time index l
-            def y_at_l(x_i, l, full_seq):
-                # replace the l-th entry of full_seq with x_i
-                seq2 = lax.dynamic_update_slice(full_seq, x_i[None, :], (l, 0))
+            def y_at_l(xt_i, l, full_seq):
+                # replace the l-th entry of full_seq with xt_i
+                seq2 = lax.dynamic_update_slice(full_seq, xt_i[None, :], (l, 0))
                 # apply your Bi-MAMBA with the passed-in params
                 y2 = mamba.apply({"params": params}, seq2[None, ...]).squeeze(0)
                 return y2[l]
@@ -455,12 +496,12 @@ def main():
             def residuals_for_one_sequence(full_seq, key):
                 L = full_seq.shape[0]
 
-                def one_step_res(l, x_l, key):
+                def one_step_res(l, xt_l, key):
                     # build a u_fn that closes over `params` and this full_seq
-                    def u_fn(xi):
-                        return y_at_l(xi, l, full_seq)
+                    def u_fn(xt_i):
+                        return y_at_l(xt_i, l, full_seq)
 
-                    res_val = residual_fn(x_l, u_fn)
+                    res_val = residual_fn(xt_l, u_fn)
                     return res_val, key
 
                 # split into L subkeys, run across time steps
@@ -478,12 +519,15 @@ def main():
 
             # 6) mean-squared residual loss
             domain_loss = jnp.mean(all_resids ** 2)
-
-            # 7) boundary loss using equation-specific boundary conditions
             _, _, x_b, t_b, batch_rng = sample_boundary_fn(
                 rand_batch_size, rand_batch_size, batch_rng
             )
-            u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
+            if eqn.time_dependent:
+                xt_b = jnp.concatenate([x_b, t_b], axis=-1)
+                u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
+            else:
+                u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
+            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             boundary_loss = jnp.mean((g_b - u_b) ** 2)
 
@@ -509,16 +553,23 @@ def main():
         losses.append(float(train_loss))
 
         if step % args.eval_every == 0:
-            l1_total, l2_total_sqr = 0.0, 0.0
-            for b in range(test_seqs.shape[0]):
-                x_seq = test_seqs[b]
-                y_true = test_truths[b]
-                y_pred = mamba.apply({"params": state.params}, x_seq)
-                err = y_pred - y_true
-                l1_total += jnp.sum(jnp.abs(err))
-                l2_total_sqr += jnp.sum(err**2)
-            l1_rel = float(l1_total / y_true_l1)
-            l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+            if not eqn.is_traj:
+                l1_total, l2_total_sqr = 0.0, 0.0
+                for b in range(test_seqs.shape[0]):
+                    x_seq = test_seqs[b]
+                    y_true = test_truths[b]
+                    y_pred = mamba.apply({"params": state.params}, x_seq)
+                    err = y_pred - y_true
+                    l1_total += jnp.sum(jnp.abs(err))
+                    l2_total_sqr += jnp.sum(err**2)
+                l1_rel = float(l1_total / y_true_l1)
+                l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+            else:
+                xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+                y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
+                y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+                l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+                l2_rel = l1_rel
 
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
@@ -559,23 +610,31 @@ def main():
 
     # --- Final evaluation on the full test set ---
     print("\n=== Final evaluation on test set ===")
-    l1_total, l2_total_sqr = 0.0, 0.0
-    for b in range(test_seqs.shape[0]):
-        x_seq = test_seqs[b]               # (B, L, D)
-        y_true = test_truths[b]            # (B, L)
+    if not eqn.is_traj:
+        l1_total, l2_total_sqr = 0.0, 0.0
+        for b in range(test_seqs.shape[0]):
+            x_seq = test_seqs[b]               # (B, L, D)
+            y_true = test_truths[b]            # (B, L)
 
-        y_pred = mamba.apply({"params": state.params}, x_seq)
-        # drop trailing dim if present
-        if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
-            y_pred = y_pred.squeeze(-1)
+            y_pred = mamba.apply({"params": state.params}, x_seq)
+            # drop trailing dim if present
+            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
+                y_pred = y_pred.squeeze(-1)
 
-        err = y_pred - y_true
-        l1_total       += jnp.sum(jnp.abs(err))
-        l2_total_sqr   += jnp.sum(err**2)
+            err = y_pred - y_true
+            l1_total       += jnp.sum(jnp.abs(err))
+            l2_total_sqr   += jnp.sum(err**2)
 
-    l1_rel = float(l1_total / y_true_l1)
-    l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
-    print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
+        l1_rel = float(l1_total / y_true_l1)
+        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+        print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
+    else:
+        xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+        y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
+        y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+        l2_rel = l1_rel
+        print(f"Final → l1_rel={l1_rel:.3e}")
 
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
         json.dump({
@@ -726,11 +785,12 @@ def main():
                       cmap=cmap,
                       eqn_name=eqn_name)
 
-    plot_all_solutions(test_seqs,
-                       test_truths,
-                       state.params,
-                       mamba,
-                       dim=args.dim)
+    if not eqn.is_traj:
+        plot_all_solutions(test_seqs,
+                           test_truths,
+                           state.params,
+                           mamba,
+                           dim=args.dim)
     def visualize_sequences(x_seq, x_ordering="none"):
         """
         Scatter‐plot each 2D “sequence” in x_seq, coloring by sequence index.
@@ -773,7 +833,11 @@ def main():
         plt.tight_layout()
         plt.savefig(f"{save_dir}/sequences_{x_ordering}.png", dpi=300)
         # plt.show()
-    visualize_sequences(test_seqs[0], x_ordering=args.x_ordering)
+    if not eqn.is_traj:
+        seq_vis = test_seqs[0]
+        if seq_vis.shape[-1] > 2:
+            seq_vis = seq_vis[..., :2]
+        visualize_sequences(seq_vis, x_ordering=args.x_ordering)
 
 
 
