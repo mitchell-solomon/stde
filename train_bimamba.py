@@ -509,17 +509,16 @@ def main():
 
             # 6) mean-squared residual loss
             domain_loss = jnp.mean(all_resids ** 2)
-
+            _, _, x_b, t_b, batch_rng = sample_boundary_fn(
+                    rand_batch_size, rand_batch_size, batch_rng
+                )
             # 7) boundary loss using equation-specific boundary conditions
-        _, _, x_b, t_b, batch_rng = sample_boundary_fn(
-            rand_batch_size, rand_batch_size, batch_rng
-        )
-        if eqn.time_dependent:
-            xt_b = jnp.concatenate([x_b, t_b], axis=-1)
-            u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
-        else:
-            u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
-        g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
+            if eqn.time_dependent:
+                xt_b = jnp.concatenate([x_b, t_b], axis=-1)
+                u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
+            else:
+                u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
+            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             boundary_loss = jnp.mean((g_b - u_b) ** 2)
 
             loss = (
