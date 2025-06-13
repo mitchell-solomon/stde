@@ -419,34 +419,41 @@ def main():
     gpu_mems = [0.0]
 
     # prepare test set (once)
-    n_test_batches = args.N_test // args.test_batch_size
-    test_seqs = []
-    test_truths = []
+    test_seqs = test_truths = None
+    if not eqn.is_traj:
+        n_test_batches = args.N_test // args.test_batch_size
+        test_seqs = []
+        test_truths = []
 
-    for _ in range(n_test_batches):
-        rng_test, sample_rng = jax.random.split(rng_test)
-        x_test_seq, _ = sample_domain_seq_fn(
-            batch_size=args.test_batch_size,
-            rng=sample_rng,
-            seq_len=args.seq_len,
-        )
-        # collapse batch & seq dims to analytical solver
-        B, L, D = x_test_seq.shape
-        x_flat = x_test_seq.reshape((B * L, D))
-        y_flat = jax.vmap(sol_fn)(x_flat)
-        test_seqs.append(x_test_seq)
-        test_truths.append(y_flat.reshape((B, L)))
-    test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
-    test_truths = jnp.stack(test_truths)   # (n_batches, B, L)
-    
-    # flatten all test ground-truth values into a single vector
-    y_true_all = test_truths.reshape(-1)  
+        for _ in range(n_test_batches):
+            rng_test, sample_rng = jax.random.split(rng_test)
+            x_test_seq, _ = sample_domain_seq_fn(
+                batch_size=args.test_batch_size,
+                rng=sample_rng,
+                seq_len=args.seq_len,
+            )
+            # collapse batch & seq dims to analytical solver
+            B, L, D = x_test_seq.shape
+            x_flat = x_test_seq.reshape((B * L, D))
+            y_flat = jax.vmap(sol_fn)(x_flat)
+            test_seqs.append(x_test_seq)
+            test_truths.append(y_flat.reshape((B, L)))
+        test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
+        test_truths = jnp.stack(test_truths)   # (n_batches, B, L)
 
-    # L1 norm of the entire test set
-    y_true_l1 = float(jnp.sum(jnp.abs(y_true_all)))     
+        # flatten all test ground-truth values into a single vector
+        y_true_all = test_truths.reshape(-1)
 
-    # L2 norm of the entire test set
-    y_true_l2 = float(jnp.linalg.norm(y_true_all))   
+        # L1 norm of the entire test set
+        y_true_l1 = float(jnp.sum(jnp.abs(y_true_all)))
+
+        # L2 norm of the entire test set
+        y_true_l2 = float(jnp.linalg.norm(y_true_all))
+    else:
+        # reference value only defined at x=0,t=0
+        y_ref = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        y_true_l1 = jnp.abs(y_ref)
+        y_true_l2 = jnp.abs(y_ref)
 
     @jax.jit
     def train_step(state: MambaTrainState) -> MambaTrainState:
@@ -546,16 +553,23 @@ def main():
         losses.append(float(train_loss))
 
         if step % args.eval_every == 0:
-            l1_total, l2_total_sqr = 0.0, 0.0
-            for b in range(test_seqs.shape[0]):
-                x_seq = test_seqs[b]
-                y_true = test_truths[b]
-                y_pred = mamba.apply({"params": state.params}, x_seq)
-                err = y_pred - y_true
-                l1_total += jnp.sum(jnp.abs(err))
-                l2_total_sqr += jnp.sum(err**2)
-            l1_rel = float(l1_total / y_true_l1)
-            l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+            if not eqn.is_traj:
+                l1_total, l2_total_sqr = 0.0, 0.0
+                for b in range(test_seqs.shape[0]):
+                    x_seq = test_seqs[b]
+                    y_true = test_truths[b]
+                    y_pred = mamba.apply({"params": state.params}, x_seq)
+                    err = y_pred - y_true
+                    l1_total += jnp.sum(jnp.abs(err))
+                    l2_total_sqr += jnp.sum(err**2)
+                l1_rel = float(l1_total / y_true_l1)
+                l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+            else:
+                xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+                y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
+                y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+                l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+                l2_rel = l1_rel
 
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
@@ -596,23 +610,31 @@ def main():
 
     # --- Final evaluation on the full test set ---
     print("\n=== Final evaluation on test set ===")
-    l1_total, l2_total_sqr = 0.0, 0.0
-    for b in range(test_seqs.shape[0]):
-        x_seq = test_seqs[b]               # (B, L, D)
-        y_true = test_truths[b]            # (B, L)
+    if not eqn.is_traj:
+        l1_total, l2_total_sqr = 0.0, 0.0
+        for b in range(test_seqs.shape[0]):
+            x_seq = test_seqs[b]               # (B, L, D)
+            y_true = test_truths[b]            # (B, L)
 
-        y_pred = mamba.apply({"params": state.params}, x_seq)
-        # drop trailing dim if present
-        if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
-            y_pred = y_pred.squeeze(-1)
+            y_pred = mamba.apply({"params": state.params}, x_seq)
+            # drop trailing dim if present
+            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
+                y_pred = y_pred.squeeze(-1)
 
-        err = y_pred - y_true
-        l1_total       += jnp.sum(jnp.abs(err))
-        l2_total_sqr   += jnp.sum(err**2)
+            err = y_pred - y_true
+            l1_total       += jnp.sum(jnp.abs(err))
+            l2_total_sqr   += jnp.sum(err**2)
 
-    l1_rel = float(l1_total / y_true_l1)
-    l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
-    print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
+        l1_rel = float(l1_total / y_true_l1)
+        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+        print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
+    else:
+        xt_zero = jnp.zeros((1, args.seq_len, args.dim + 1))
+        y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
+        y_true = eqn.sol(jnp.zeros((args.dim,)), jnp.zeros((1,)), eqn_cfg)
+        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+        l2_rel = l1_rel
+        print(f"Final → l1_rel={l1_rel:.3e}")
 
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
         json.dump({
@@ -763,11 +785,12 @@ def main():
                       cmap=cmap,
                       eqn_name=eqn_name)
 
-    plot_all_solutions(test_seqs,
-                       test_truths,
-                       state.params,
-                       mamba,
-                       dim=args.dim)
+    if not eqn.is_traj:
+        plot_all_solutions(test_seqs,
+                           test_truths,
+                           state.params,
+                           mamba,
+                           dim=args.dim)
     def visualize_sequences(x_seq, x_ordering="none"):
         """
         Scatter‐plot each 2D “sequence” in x_seq, coloring by sequence index.
@@ -810,10 +833,11 @@ def main():
         plt.tight_layout()
         plt.savefig(f"{save_dir}/sequences_{x_ordering}.png", dpi=300)
         # plt.show()
-    seq_vis = test_seqs[0]
-    if seq_vis.shape[-1] > 2:
-        seq_vis = seq_vis[..., :2]
-    visualize_sequences(seq_vis, x_ordering=args.x_ordering)
+    if not eqn.is_traj:
+        seq_vis = test_seqs[0]
+        if seq_vis.shape[-1] > 2:
+            seq_vis = seq_vis[..., :2]
+        visualize_sequences(seq_vis, x_ordering=args.x_ordering)
 
 
 
