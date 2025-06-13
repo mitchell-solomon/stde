@@ -12,6 +12,11 @@ For reader who do not wish to go through the entire repo, the script `sine_gordo
 python sine_gordon.py --sparse --dim 100000 --rand_batch_size 16
 ```
 
+> **Note**
+> Some "threebody" equations (e.g. `SineGordonThreebody`) require a spatial
+> dimension of at least 3. Running them with `--dim < 3` will produce invalid
+> reference solutions and lead to infinite relative errors.
+
 # How to reproduce results shown in the paper
 ## Inseparable and effectively high-dimensional PDEs
 To run the 100kD two-body Allen-Cahn equation described in Appendix I.1. with sparse STDE: 

@@ -172,6 +172,9 @@ args = parser.parse_args()
 rand_batch_size = max(1, args.spatial_dim // 10)
 args.rand_batch_size = rand_batch_size
 
+if "Threebody" in args.eqn_name and args.dim < 3:
+    raise ValueError("Threebody equations require --dim >= 3")
+
 pprint(args)
 
 # set up Haiku PRNG sequence for stde.operators

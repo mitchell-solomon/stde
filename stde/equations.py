@@ -620,6 +620,8 @@ def threebody_sol(
   t: types.T,
   cfg: EqnConfig,
 ) -> Float[types.NPArray, "*batch"]:
+  if cfg.dim < 3:
+    raise ValueError("Threebody equations require dim >= 3")
   t1 = cfg.max_radius**2 - jnp.sum(x**2, -1)
   x1, x2, x3 = x[..., :-2], x[..., 1:-1], x[..., 2:]
   t2 = cfg.coeffs[:, :-2] * jnp.exp(x1 * x2 * x3)
@@ -629,6 +631,8 @@ def threebody_sol(
 
 
 def threebody_lapl_analytical(x: types.x_like, cfg: EqnConfig):
+  if cfg.dim < 3:
+    raise ValueError("Threebody equations require dim >= 3")
   coeffs = cfg.coeffs[:, :-2]
   u1 = cfg.max_radius**2 - jnp.sum(x**2)
   du1_dx = -2 * x
