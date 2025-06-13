@@ -205,7 +205,10 @@ def sample_domain_seq_fn(
     concatenated such that the model receives ``(x, t)`` as features.
     """
 
-    x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+    if eqn.is_traj:
+        x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+    else:
+        x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
 
     # reshape to sequences
     x_seq = x.reshape((batch_size, seq_len, -1))
@@ -214,7 +217,7 @@ def sample_domain_seq_fn(
         # order each sequence by increasing time so that seq axis is temporal
         sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
         x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
-        t_seq = jnp.take_along_axis(t_seq, sort_idx, axis=1)
+        t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
         x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
     return x_seq, rng
 
@@ -510,14 +513,14 @@ def main():
             # 6) mean-squared residual loss
             domain_loss = jnp.mean(all_resids ** 2)
             _, _, x_b, t_b, batch_rng = sample_boundary_fn(
-                    rand_batch_size, rand_batch_size, batch_rng
-                )
-            # 7) boundary loss using equation-specific boundary conditions
+                rand_batch_size, rand_batch_size, batch_rng
+            )
             if eqn.time_dependent:
                 xt_b = jnp.concatenate([x_b, t_b], axis=-1)
                 u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
             else:
                 u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
+            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             boundary_loss = jnp.mean((g_b - u_b) ** 2)
 
