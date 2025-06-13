@@ -198,10 +198,24 @@ def sample_domain_seq_fn(
     rng: jax.Array,
     seq_len: int,
 ) -> Tuple[jnp.ndarray, jax.Array]:
-    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences."""
+    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
+
+    If the equation is time dependent, the returned sequence dimension
+    corresponds to the temporal axis. The sampled ``x`` and ``t`` are
+    concatenated such that the model receives ``(x, t)`` as features.
+    """
 
     x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+
+    # reshape to sequences
     x_seq = x.reshape((batch_size, seq_len, -1))
+    if eqn.time_dependent and t is not None:
+        t_seq = t.reshape((batch_size, seq_len, -1))
+        # order each sequence by increasing time so that seq axis is temporal
+        sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+        x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+        t_seq = jnp.take_along_axis(t_seq, sort_idx, axis=1)
+        x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
     return x_seq, rng
 
 # -----------------------------------------------------------------------------
@@ -231,15 +245,28 @@ sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
 sample_boundary_fn = sample_domain_fn
 
 if eqn.time_dependent:
-    raise NotImplementedError("Time-dependent PDEs are not supported")
+    sol_fn = lambda xt: eqn.sol(xt[..., :args.dim], xt[..., args.dim:], eqn_cfg)
 
-sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
+    def residual_fn(xt, u_fn: Callable) -> Float[Array, "xt_dim"]:
+        x_part = xt[..., :args.dim]
+        t_part = xt[..., args.dim:]
+        res = eqn.res(
+            x_part,
+            t_part,
+            lambda xi, ti: u_fn(jnp.concatenate([xi, ti], axis=-1)),
+            eqn_cfg,
+        )
+        if isinstance(res, tuple):
+            res = res[0]
+        return res
+else:
+    sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
 
-def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-    res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
-    if isinstance(res, tuple):
-        res = res[0]
-    return res
+    def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
+        res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
+        if isinstance(res, tuple):
+            res = res[0]
+        return res
 
 # -----------------------------------------------------------------------------
 # Training state
@@ -302,10 +329,14 @@ def main():
             
             x_out = nn.Dense(args.dense_expansion*D, name="mlp", kernel_init=nn.initializers.lecun_normal())(x)
             x_out = nn.gelu(x_out)
-            x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out) # (B, L, D) --> (B, L, 1)
+            x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)  # (B, L, D) --> (B, L, 1)
             x_out = x_out.squeeze(-1)
             # enforce PDE-specific boundary condition
-            x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
+            if self.eqn.time_dependent:
+                x_part, t_part = x_in[..., :args.dim], x_in[..., args.dim:]
+                x_out = self.eqn.enforce_boundary(x_part, t_part, x_out, self.eqn_cfg)
+            else:
+                x_out = self.eqn.enforce_boundary(x_in, None, x_out, self.eqn_cfg)
 
             return x_out
 
@@ -443,9 +474,9 @@ def main():
             )  # x_seq shape: (B, L, D)
 
             # 3) helper: model output at time index l
-            def y_at_l(x_i, l, full_seq):
-                # replace the l-th entry of full_seq with x_i
-                seq2 = lax.dynamic_update_slice(full_seq, x_i[None, :], (l, 0))
+            def y_at_l(xt_i, l, full_seq):
+                # replace the l-th entry of full_seq with xt_i
+                seq2 = lax.dynamic_update_slice(full_seq, xt_i[None, :], (l, 0))
                 # apply your Bi-MAMBA with the passed-in params
                 y2 = mamba.apply({"params": params}, seq2[None, ...]).squeeze(0)
                 return y2[l]
@@ -455,12 +486,12 @@ def main():
             def residuals_for_one_sequence(full_seq, key):
                 L = full_seq.shape[0]
 
-                def one_step_res(l, x_l, key):
+                def one_step_res(l, xt_l, key):
                     # build a u_fn that closes over `params` and this full_seq
-                    def u_fn(xi):
-                        return y_at_l(xi, l, full_seq)
+                    def u_fn(xt_i):
+                        return y_at_l(xt_i, l, full_seq)
 
-                    res_val = residual_fn(x_l, u_fn)
+                    res_val = residual_fn(xt_l, u_fn)
                     return res_val, key
 
                 # split into L subkeys, run across time steps
@@ -480,11 +511,15 @@ def main():
             domain_loss = jnp.mean(all_resids ** 2)
 
             # 7) boundary loss using equation-specific boundary conditions
-            _, _, x_b, t_b, batch_rng = sample_boundary_fn(
-                rand_batch_size, rand_batch_size, batch_rng
-            )
+        _, _, x_b, t_b, batch_rng = sample_boundary_fn(
+            rand_batch_size, rand_batch_size, batch_rng
+        )
+        if eqn.time_dependent:
+            xt_b = jnp.concatenate([x_b, t_b], axis=-1)
+            u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
+        else:
             u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
-            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
+        g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
             boundary_loss = jnp.mean((g_b - u_b) ** 2)
 
             loss = (
@@ -773,7 +808,10 @@ def main():
         plt.tight_layout()
         plt.savefig(f"{save_dir}/sequences_{x_ordering}.png", dpi=300)
         # plt.show()
-    visualize_sequences(test_seqs[0], x_ordering=args.x_ordering)
+    seq_vis = test_seqs[0]
+    if seq_vis.shape[-1] > 2:
+        seq_vis = seq_vis[..., :2]
+    visualize_sequences(seq_vis, x_ordering=args.x_ordering)
 
 
 
