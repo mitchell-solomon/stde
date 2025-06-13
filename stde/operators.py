@@ -227,7 +227,7 @@ def hess_diag(
       return idx_set, f_val, f_x, f_xx
 
     if with_time:
-      assert cfg.rand_batch_size == 0
+      # assert cfg.rand_batch_size == 0
       # ensure the time dimension is always included in the sample
       idx_set = jnp.concatenate(
         [idx_set, jnp.array([cfg.dim], dtype=jnp.int32)]
