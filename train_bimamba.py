@@ -157,7 +157,7 @@ parser.add_argument("--get_mem", action="store_true",
 args = parser.parse_args()
 
 # derive rand_batch_size from dimension (order of magnitude lower)
-rand_batch_size = max(2, args.dim // 10)
+rand_batch_size = max(1, args.dim // 10)
 args.rand_batch_size = rand_batch_size
 
 pprint(args)
