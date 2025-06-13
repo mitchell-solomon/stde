@@ -65,7 +65,8 @@ def _safe_eval(func, x, t, cfg):
     except Exception:
         vmapped = jax.vmap(lambda xv, tv: func(xv, tv, cfg))
         return np.array(vmapped(x, t))
-def visualize_PDEs(n_interior: int = 500, n_boundary: int = 100, seed: int = 0):
+
+def visualize_PDEs(n_interior: int = 5000, n_boundary: int = 1000, seed: int = 0):
     cfg = Config()
     rng = jax.random.PRNGKey(seed)
     for name in EQN_NAMES:
@@ -101,11 +102,17 @@ def visualize_PDEs(n_interior: int = 500, n_boundary: int = 100, seed: int = 0):
             xlabel, ylabel = "dim0", "dim1"
 
         # make plot square to mirror plot_solution style
-        fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={"aspect": "equal"})
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_box_aspect(1)
+
 
         sc = ax.scatter(xi, yi, c=vals, cmap="viridis", s=20, label="interior", marker="o")
         ax.scatter(xbi, ybi, c=vals_b, cmap="viridis", s=40, label="boundary", marker="^")
         cbar = fig.colorbar(sc, ax=ax, shrink=0.8, pad=0.02, label="PDE value")
+
+        ax.set_xlim(np.min(np.concatenate([xi, xbi])), np.max(np.concatenate([xi, xbi])))
+        ax.set_ylim(np.min(np.concatenate([yi, ybi])), np.max(np.concatenate([yi, ybi])))
+
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.legend()
