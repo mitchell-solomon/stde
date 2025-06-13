@@ -186,89 +186,23 @@ logger.addHandler(logging.StreamHandler())
 tqdm_out = TqdmToLogger(logger)
 
 # -----------------------------------------------------------------------------
-# Domain sampler: can return single points or time sequences of points
+# Domain sampler utilising equation specific sampler
 # -----------------------------------------------------------------------------
 
-@partial(jax.jit, static_argnames=(
-    "batch_size","seq_len","radius","dim",
-    "sampling_mode","x_ordering"
-))
-def sample_domain_fn(batch_size: int,
-                     rng: jax.Array,
-                     radius: float,
-                     dim: int,
-                     seq_len: int,
-                     sampling_mode: str = "random",
-                     x_ordering:   str = "none",
-                     ) -> Tuple[jnp.ndarray, jax.Array]:
-    # 1) Sampling
-    if sampling_mode == "random":
-        # your Monte‐Carlo interior sampler
-        keys = jax.random.split(rng, seq_len + 1)
-        out = []
-        for i in range(seq_len):
-            r = jax.random.uniform(keys[i], (batch_size, 1), minval=0.0, maxval=radius)
-            x = jax.random.normal(keys[i+1], (batch_size, dim))
-            x = x / jnp.linalg.norm(x, axis=-1, keepdims=True) * r
-            out.append(x)
-        x_seq, new_rng = jnp.stack(out, axis=1), keys[0]
+sample_domain_fn = None  # placeholder, defined after equation is loaded
 
-    elif sampling_mode == "grid":
-        # even grid projected onto sphere
-        n = int(round(batch_size ** (1/ dim)))
-        coords = jnp.linspace(-radius, radius, n)
-        meshes = jnp.meshgrid(*([coords]*dim), indexing="ij")
-        pts = jnp.stack([m.flatten() for m in meshes], axis=-1)  # (B, D)
-        norm = jnp.linalg.norm(pts, axis=-1, keepdims=True)
-        pts = pts / norm * radius
-        x_seq = jnp.broadcast_to(pts[:,None,:], (batch_size, seq_len, dim))
-        new_rng = rng
 
-    elif sampling_mode == "radial":
-        # Random‐start & end radial segments:
-        # each sequence is a straight ray from r_start → r_end, with RANDOM spacing.
+@partial(jax.jit, static_argnames=("batch_size", "seq_len"))
+def sample_domain_seq_fn(
+    batch_size: int,
+    rng: jax.Array,
+    seq_len: int,
+) -> Tuple[jnp.ndarray, jax.Array]:
+    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences."""
 
-        # 1) split RNG for four draws
-        rng, sub_r0, sub_r1, sub_dir, sub_t = jax.random.split(rng, 5)
-
-        # 2) sample two radii ∈ [0, R/4] and [R, R] (so r0<r1)
-        r0 = jax.random.uniform(sub_r0, (batch_size,1), minval=0.0,        maxval=radius/4)
-        r1 = jax.random.uniform(sub_r1, (batch_size,1), minval=radius/4,   maxval=radius)
-        r_start = jnp.minimum(r0, r1)   # (B,1)
-        r_end   = jnp.maximum(r0, r1)   # (B,1)
-
-        # 3) sample seq_len random t’s ∈ [0,1], then sort to enforce monotonicity
-        t_rand    = jax.random.uniform(sub_t, (batch_size, seq_len, 1))
-        t_sorted  = jnp.sort(t_rand, axis=1)             # (B, L, 1)
-
-        # 4) compute per‐step radii: r = (1−t)·r_start + t·r_end
-        radii = (1.0 - t_sorted) * r_start[:,None,:] \
-              +            t_sorted * r_end[:,None,:]   # (B, L, 1)
-
-        # 5) sample random directions on unit‐sphere
-        dirs = jax.random.normal(sub_dir, (batch_size, dim))
-        dirs = dirs / jnp.linalg.norm(dirs, axis=-1, keepdims=True)  # (B, D)
-
-        # 6) assemble sequences
-        x_seq, new_rng = dirs[:, None, :] * radii, rng           # → (B, L, D)
-        return x_seq, new_rng
-
-    else:
-        raise ValueError(f"Unknown sampling_mode: {sampling_mode}")
-
-    # 2) Ordering
-    if x_ordering == "coordinate":
-        idx = jnp.argsort(x_seq[...,0], axis=1)
-    elif x_ordering == "radial":
-        idx = jnp.argsort(jnp.linalg.norm(x_seq, axis=-1), axis=1)
-    elif x_ordering == "none":
-        return x_seq, new_rng
-    else:
-        raise ValueError(f"Unknown x_ordering: {x_ordering}")
-
-    batch_idx = jnp.arange(batch_size)[:,None]
-    x_seq = x_seq[batch_idx, idx]
-    return x_seq, new_rng
+    x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+    x_seq = x.reshape((batch_size, seq_len, -1))
+    return x_seq, rng
 
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
@@ -293,7 +227,8 @@ else:
     eqn_cfg.coeffs = None
 
 # sampler for boundary points using equation-specific sampling
-sample_boundary_fn = eqn.get_sample_domain_fn(eqn_cfg)
+sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
+sample_boundary_fn = sample_domain_fn
 
 if eqn.time_dependent:
     raise NotImplementedError("Time-dependent PDEs are not supported")
@@ -385,14 +320,10 @@ def main():
             if rng is None:
                 rng = jax.random.PRNGKey(0)
 
-            x, _ = sample_domain_fn(
+            x, _ = sample_domain_seq_fn(
                 batch_size=n_pts,
                 rng=rng,
-                radius=radius,
-                dim=dim,
                 seq_len=seq_len,
-                sampling_mode=args.sampling_mode,
-                x_ordering=args.x_ordering,
             )
 
             print(nn.tabulate(
@@ -406,13 +337,11 @@ def main():
 
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)
-    x_dummy, rng = sample_domain_fn(batch_size=2,
-                                    rng=init_rng,
-                                    radius=args.x_radius,
-                                    dim=args.dim,
-                                    seq_len=args.seq_len,
-                                    x_ordering=args.x_ordering,
-                                    sampling_mode=args.sampling_mode)
+    x_dummy, rng = sample_domain_seq_fn(
+        batch_size=2,
+        rng=init_rng,
+        seq_len=args.seq_len,
+    )
     flax_vars = mamba.init(init_rng, x_dummy)
 
     # print input and output shapes
@@ -462,13 +391,11 @@ def main():
 
     for _ in range(n_test_batches):
         rng_test, sample_rng = jax.random.split(rng_test)
-        x_test_seq, _ = sample_domain_fn(args.test_batch_size,
-                                        rng=sample_rng,
-                                        radius=args.x_radius,
-                                        dim=args.dim,
-                                        seq_len=args.seq_len,
-                                        x_ordering=args.x_ordering,
-                                        sampling_mode=args.sampling_mode)
+        x_test_seq, _ = sample_domain_seq_fn(
+            batch_size=args.test_batch_size,
+            rng=sample_rng,
+            seq_len=args.seq_len,
+        )
         # collapse batch & seq dims to analytical solver
         B, L, D = x_test_seq.shape
         x_flat = x_test_seq.reshape((B * L, D))
@@ -491,14 +418,10 @@ def main():
     def train_step(state: MambaTrainState) -> MambaTrainState:
         # 1) split off one rng for sampling, one to carry forward
         batch_rng, next_rng = jax.random.split(state.rng)
-        x_seq, batch_rng = sample_domain_fn(
+        x_seq, batch_rng = sample_domain_seq_fn(
             batch_size=rand_batch_size,
             rng=batch_rng,
-            radius=args.x_radius,
-            dim=args.dim,
             seq_len=args.seq_len,
-            x_ordering=args.x_ordering,
-            sampling_mode=args.sampling_mode
         )  # x_seq: (B, L, D)
 
         def loss_fn(params, rng):
@@ -513,14 +436,10 @@ def main():
             batch_rng, new_rng = jax.random.split(rng)
 
             # 2) sample a fresh batch of input sequences
-            x_seq, batch_rng = sample_domain_fn(
+            x_seq, batch_rng = sample_domain_seq_fn(
                 batch_size=rand_batch_size,
                 rng=batch_rng,
-                radius=args.x_radius,
-                dim=args.dim,
                 seq_len=args.seq_len,
-                x_ordering=args.x_ordering,
-                sampling_mode=args.sampling_mode
             )  # x_seq shape: (B, L, D)
 
             # 3) helper: model output at time index l
