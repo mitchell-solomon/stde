@@ -18,7 +18,8 @@ EQUATION_NAMES = [name for name, val in inspect.getmembers(equations)
 @pytest.mark.parametrize('name', EQUATION_NAMES)
 def test_equation_forms(name):
     eqn: Equation = getattr(equations, name)
-    cfg = EqnConfig(dim=2)
+    dim = 3 if 'Threebody' in name else 2
+    cfg = EqnConfig(dim=dim)
 
     if getattr(eqn, 'random_coeff', False):
         cfg.coeffs = jnp.ones((1, cfg.dim))
