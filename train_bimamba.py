@@ -650,96 +650,122 @@ def main():
     # --- Plotting ---
 
 
+    def _title_for_eqn(name: str, cfg: EqnConfig) -> str:
+        params = []
+        if name == "HJB_LQG":
+            params.append(f"mu={cfg.mu}")
+        if name == "HJB_LIN":
+            params.append(f"c={cfg.c}")
+        if name == "BSB":
+            params.append(f"sigma={cfg.sigma}")
+            params.append(f"r={cfg.r}")
+        if hasattr(cfg, "max_radius"):
+            params.append(f"max_r={cfg.max_radius}")
+        parts = ", ".join(params)
+        bc = eqn.boundary_cond.__name__
+        return f"{name} ({parts})\nBC: {bc}"
+
     def plot_solution(x_flat, u_true, u_pred,
-                      dim: int = None,
-                      xlabel: str = 'x',
-                      ylabel: str = 'u',
+                      dim: int | None = None,
                       cmap: str = 'viridis',
                       eqn_name: str = args.eqn_name):
-        """
-        Plot true vs. predicted solutions for the chosen equation.
-        If the embedding dimension ``D`` > 2, only the first two dims are used for plotting.
-        
-        Args:
-        x_flat:   array of shape (N, D) or (N,) for 1D
-        u_true:   array of shape (N,)
-        u_pred:   array of shape (N,)
-        dim:      override spatial dimension (1 or 2). If None, inferred from x_flat.
-        """
-        # Infer dimension if not provided
-        if dim is None:
-            if x_flat.ndim == 1:
-                D = 1
-            else:
-                D = x_flat.shape[1]
-        else:
-            D = dim
+        """Plot true, predicted and diff solution with PDE meta info."""
 
-        # Cap at 2 dimensions for plotting
-        if D > 2:
-            print(f"Warning: embedding dim={D} > 2; plotting only first two dims.")
-            D = 2
+        diff = u_pred - u_true
 
-        # 1D plot
-        if D == 1:
-            # collapse to 1D coordinate
-            x = x_flat if x_flat.ndim == 1 else x_flat[:, 0]
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-            ax1.plot(x, u_true, '.', label='true')
-            ax1.set_title('True u(x)')
-            ax1.set_xlabel(xlabel)
-            ax1.set_ylabel(ylabel)
-            ax2.plot(x, u_pred, '.', label='pred', color='C1')
-            ax2.set_title('Predicted u(x)')
-            ax2.set_xlabel(xlabel)
-            ax2.set_ylabel(ylabel)
+        if eqn.time_dependent or eqn.is_traj:
+            xi = np.array(x_flat[:, 0])
+            yi = np.array(x_flat[:, -1])
+            xlabel, ylabel = 'x', 't'
 
-        # 2D scatter with shared colorbar
-        elif D == 2:
-            # pick first two coords
-            xi = x_flat[:, 0]
-            yi = x_flat[:, 1]
-
-            # common color limits
             vmin = min(np.min(u_true), np.min(u_pred))
             vmax = max(np.max(u_true), np.max(u_pred))
 
-            fig, (ax1, ax2) = plt.subplots(
-                1, 2, figsize=(12, 5), subplot_kw={'aspect': 'equal'}
-            )
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
+                                  vmin=vmin, vmax=vmax, s=20)
+            axes[0].set_title('True u')
+            axes[0].set_xlabel(xlabel)
+            axes[0].set_ylabel(ylabel)
 
-            sc1 = ax1.scatter(xi, yi,
-                            c=u_true, cmap=cmap,
-                            vmin=vmin, vmax=vmax,
-                            s=20)
-            ax1.set_title('True u')
-            ax1.set_xlabel('dim0')
-            ax1.set_ylabel('dim1')
+            sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
+                                  vmin=vmin, vmax=vmax, s=20)
+            axes[1].set_title('Predicted u')
+            axes[1].set_xlabel(xlabel)
+            axes[1].set_ylabel(ylabel)
 
-            sc2 = ax2.scatter(xi, yi,
-                            c=u_pred, cmap=cmap,
-                            vmin=vmin, vmax=vmax,
-                            s=20)
-            ax2.set_title('Predicted u')
-            ax2.set_xlabel('dim0')
-            ax2.set_ylabel('dim1')
+            sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20)
+            axes[2].set_title('Difference')
+            axes[2].set_xlabel(xlabel)
+            axes[2].set_ylabel(ylabel)
 
-            # one shared colorbar anchored to the bottom outside the x axis
-            cbar = fig.colorbar(sc1, ax=[ax1, ax2],
-                                shrink=0.8, pad=0.02,
-                                label=ylabel,
-                                orientation='vertical',
-                                location='right',
-                                )
-
-            # plt.tight_layout()
+            fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
+            fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
 
         else:
-            raise ValueError("plot only supports 1D or 2D embeddings for visualization")
+            if dim is None:
+                D = x_flat.shape[1] if x_flat.ndim > 1 else 1
+            else:
+                D = dim
 
-        # plt.tight_layout()
+            if D > 2:
+                print(f"Warning: embedding dim={D} > 2; plotting only first two dims.")
+                D = 2
+
+            if D == 1:
+                x = x_flat if x_flat.ndim == 1 else x_flat[:, 0]
+                fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+                axes[0].plot(x, u_true, '.', label='true')
+                axes[0].set_title('True u(x)')
+                axes[0].set_xlabel('x')
+                axes[0].set_ylabel('u')
+
+                axes[1].plot(x, u_pred, '.', color='C1')
+                axes[1].set_title('Predicted u(x)')
+                axes[1].set_xlabel('x')
+                axes[1].set_ylabel('u')
+
+                axes[2].plot(x, diff, '.', color='C2')
+                axes[2].set_title('Difference')
+                axes[2].set_xlabel('x')
+                axes[2].set_ylabel('Δu')
+
+            elif D == 2:
+                xi = x_flat[:, 0]
+                yi = x_flat[:, 1]
+
+                vmin = min(np.min(u_true), np.min(u_pred))
+                vmax = max(np.max(u_true), np.max(u_pred))
+
+                fig, axes = plt.subplots(1, 3, figsize=(15, 5),
+                                       subplot_kw={'aspect': 'equal'})
+
+                sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
+                                      vmin=vmin, vmax=vmax, s=20)
+                axes[0].set_title('True u')
+                axes[0].set_xlabel('dim0')
+                axes[0].set_ylabel('dim1')
+
+                sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
+                                      vmin=vmin, vmax=vmax, s=20)
+                axes[1].set_title('Predicted u')
+                axes[1].set_xlabel('dim0')
+                axes[1].set_ylabel('dim1')
+
+                sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20)
+                axes[2].set_title('Difference')
+                axes[2].set_xlabel('dim0')
+                axes[2].set_ylabel('dim1')
+
+                fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
+                fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
+
+            else:
+                raise ValueError('plot only supports 1D or 2D embeddings for visualization')
+
+        fig.suptitle(_title_for_eqn(eqn_name, eqn_cfg))
+        plt.tight_layout()
         plt.savefig(f"{save_dir}/{eqn_name}_solution.png", dpi=300)
-        # plt.show()
 
     def plot_all_solutions(test_seqs, test_truths, params, mamba, dim=None,
                            xlabel='x', ylabel='u', cmap='viridis',
@@ -780,8 +806,6 @@ def main():
                       u_true_np,
                       u_pred_np,
                       dim=dim,
-                      xlabel=xlabel,
-                      ylabel=ylabel,
                       cmap=cmap,
                       eqn_name=eqn_name)
 
