@@ -25,20 +25,16 @@ import flax.linen as nn
 import optax
 from tqdm import tqdm
 
-class TqdmToLogger(io.StringIO):
-    """Redirect tqdm output to logging."""
+import matplotlib.pyplot as plt
+# from pprint import pprint
+import pprint
+import re
 
-    def __init__(self, logger, level=logging.INFO):
-        super().__init__()
-        self.logger = logger
-        self.level = level
-        self.buf = ""
 
-    def write(self, buf):
-        self.buf = buf.strip("\r\n\t ")
+from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
+from stde.config import EqnConfig
+from stde import equations as eqns
 
-    def flush(self):
-        self.logger.log(self.level, self.buf)
 
 
 def count_params(params):
@@ -50,18 +46,13 @@ def save_params(params, step: int, save_dir: str, save_every: int, epochs: int):
     if step == 0:
         with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(vars(args), f, indent=2)
-    if (step + 1) != epochs and step % save_every != 0:
-        return
-    with open(os.path.join(save_dir, f"params_{step}.pkl"), "wb") as f:
-        pickle.dump(params, f)
+    if step == epochs - 1:
+        with open(os.path.join(save_dir, f"params_final.pkl"), "wb") as f:
+            pickle.dump(params, f)
+    if step % save_every == 0:
+        with open(os.path.join(save_dir, f"params_{step}.pkl"), "wb") as f:
+            pickle.dump(params, f)
 
-import matplotlib.pyplot as plt
-from pprint import pprint
-
-
-from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
-from stde.config import EqnConfig
-from stde import equations as eqns
 
 
 # -----------------------------------------------------------------------------
@@ -85,13 +76,14 @@ parser.add_argument(
     help=argparse.SUPPRESS,
 )
 parser.add_argument("--epochs", type=int, default=10000)
-parser.add_argument("--eval_every", type=int, default=10000000)
+parser.add_argument("--eval_every", type=int, default=5000)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
 parser.add_argument("--x_radius", type=float, default=1.0)
-parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
+parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", 
+                    help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
 
 parser.add_argument(
     "--sampling_mode", type=str,
@@ -163,8 +155,6 @@ parser.add_argument("--ssm_activation", type=str, default="silu", choices=["silu
 parser.add_argument("--run_name", type=str, default="test_run")
 parser.add_argument("--save_every", type=int, default=10000,
                     help="save parameters every n steps")
-parser.add_argument("--get_mem", action="store_true",
-                    help="measure GPU memory usage")
 
 args = parser.parse_args()
 
@@ -172,10 +162,34 @@ args = parser.parse_args()
 rand_batch_size = max(1, args.spatial_dim // 10)
 args.rand_batch_size = rand_batch_size
 
-if "Threebody" in args.eqn_name and args.dim < 3:
-    raise ValueError("Threebody equations require --dim >= 3")
+# ---------------------------------------------------------------------------
+# logging setup
+# ---------------------------------------------------------------------------
+# create a dir with the run name where we save all results
+save_dir = f"_results/{args.run_name}"
+os.makedirs(save_dir, exist_ok=True)
 
-pprint(args)
+# ---------------------------------------------------------------------------
+# logging setup
+# ---------------------------------------------------------------------------
+log_file = os.path.join(save_dir, "train.log")
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler(log_file, mode="w")
+fh.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(fh)
+
+# --- Spatial dimension requirements checks ---
+# These equations require spatial_dim == 1
+one_dim_eqns = ["SemilinearHeatTime", "SineGordonTime", "AllenCahnTime"]
+allowed_dims = {10, 100, 1000, 10000}
+if args.eqn_name in one_dim_eqns and args.spatial_dim not in allowed_dims:
+    logger.error(f"ERROR: {args.eqn_name} only supports spatial_dim in {sorted(allowed_dims)}, but got spatial_dim={args.spatial_dim}")
+    exit(1)
+if "Threebody" in args.eqn_name and args.spatial_dim < 3:
+    logger.error(f"ERROR: {args.eqn_name} requires spatial_dim >= 3, but got spatial_dim={args.spatial_dim}")
+    exit(1)
+
 
 # set up Haiku PRNG sequence for stde.operators
 rng_seq = hk.PRNGSequence(args.SEED)
@@ -197,8 +211,22 @@ logger.setLevel(logging.INFO)
 fh = logging.FileHandler(log_file, mode="w")
 fh.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(fh)
-logger.addHandler(logging.StreamHandler())
-tqdm_out = TqdmToLogger(logger)
+
+# --- Spatial dimension requirements checks ---
+# These equations require spatial_dim == 1
+one_dim_eqns = ["SemilinearHeatTime", "SineGordonTime", "AllenCahnTime"]
+allowed_dims = {10, 100, 1000, 10000}
+if args.eqn_name in one_dim_eqns and args.spatial_dim not in allowed_dims:
+    logger.error(f"ERROR: {args.eqn_name} only supports spatial_dim in {sorted(allowed_dims)}, but got spatial_dim={args.spatial_dim}")
+    exit(1)
+if "Threebody" in args.eqn_name and args.spatial_dim < 3:
+    logger.error(f"ERROR: {args.eqn_name} requires spatial_dim >= 3, but got spatial_dim={args.spatial_dim}")
+    exit(1)
+
+
+# log args
+args_str = pprint.pformat(vars(args), indent=2)
+logger.info(f"Args:\n{args_str}\n")
 
 # -----------------------------------------------------------------------------
 # Domain sampler utilising equation specific sampler
@@ -377,11 +405,65 @@ def main():
                 seq_len=seq_len,
             )
 
-            print(nn.tabulate(
+            table = nn.tabulate(
                 self,
                 rngs={"params": rng},
                 mutable=["params", "diagnostics", "intermediates"],
-            )(x))
+            )(x)
+            return table
+
+        def loss_fn(self, params, rng, mamba_apply, sample_domain_seq_fn, sample_boundary_fn, rand_batch_size, args, eqn, eqn_cfg):
+            batch_rng, new_rng = jax.random.split(rng)
+            x_seq, batch_rng = sample_domain_seq_fn(
+                batch_size=rand_batch_size,
+                rng=batch_rng,
+                seq_len=args.seq_len,
+            )
+            def y_at_l(xt_i, l, full_seq):
+                seq2 = lax.dynamic_update_slice(full_seq, xt_i[None, :], (l, 0))
+                y2 = mamba_apply({"params": params}, seq2[None, ...]).squeeze(0)
+                return y2[l]
+            def residuals_for_one_sequence(full_seq, key):
+                L = full_seq.shape[0]
+                def one_step_res(l, xt_l, key):
+                    def u_fn(xt_i):
+                        return y_at_l(xt_i, l, full_seq)
+                    res_val = residual_fn(xt_l, u_fn)
+                    return res_val, key
+                keys = jax.random.split(key, L)
+                resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
+                    jnp.arange(L), full_seq, keys
+                )
+                return resids, _
+            outer_keys = jax.random.split(batch_rng, x_seq.shape[0])
+            all_resids, _ = jax.vmap(
+                residuals_for_one_sequence, in_axes=(0, 0), out_axes=(0, 0)
+            )(x_seq, outer_keys)
+            domain_loss = jnp.mean(all_resids ** 2)
+            _, _, x_b, t_b, batch_rng = sample_boundary_fn(
+                rand_batch_size, rand_batch_size, batch_rng
+            )
+            if eqn.time_dependent:
+                xt_b = jnp.concatenate([x_b, t_b], axis=-1)
+                u_b = mamba_apply({"params": params}, xt_b[:, None, :]).squeeze()
+            else:
+                u_b = mamba_apply({"params": params}, x_b[:, None, :]).squeeze()
+            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
+            boundary_loss = jnp.mean((g_b - u_b) ** 2)
+            loss = (
+                eqn_cfg.domain_weight * domain_loss
+                + eqn_cfg.boundary_weight * boundary_loss
+            )
+            return loss, new_rng
+
+        def err_norms_fn(self, params, x_seq, y_true, mamba_apply):
+            y_pred = mamba_apply({"params": params}, x_seq)
+            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
+                y_pred = y_pred.squeeze(-1)
+            err = y_true - y_pred
+            l1 = jnp.abs(err).sum()
+            l2 = (err ** 2).sum()
+            return l1, l2
 
     # And then proceed to instantiate your model as before:
     mamba = BiMambaPINN(eqn=eqn, eqn_cfg=eqn_cfg)
@@ -395,34 +477,23 @@ def main():
     )
     flax_vars = mamba.init(init_rng, x_dummy)
 
-    # print input and output shapes
-    print("Input shape:", x_dummy.shape)
-    print("Output shape:", mamba.apply(flax_vars, x_dummy).shape)
+    # log input and output shapes
+    logger.info(f"Input shape: {x_dummy.shape}")
+    logger.info(f"Output shape: {mamba.apply(flax_vars, x_dummy).shape}")
+    
 
     # Tabulate the model architecture for reference
-    mamba.tabulate_model()
+    table = mamba.tabulate_model()
+
+    def strip_ansi(text):
+        ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+        return ansi_escape.sub('', text)
+
+    table = strip_ansi(table)
+    logger.info(f"Model architecture:{table}")
     
     # init exponential decay learning rate schedule
-    
     lr = args.lr
-    # lr = optax.exponential_decay(
-    #     init_value=args.lr,
-    #     transition_steps=args.epochs,
-    #     transition_begin=args.epochs//3,
-    #     decay_rate=0.0001
-    # )
-    
-    # # plot lr vs epoch
-    # epochs = list(range(args.epochs))
-    # lrs = [lr(epoch) for epoch in epochs]
-    # plt.plot(epochs, lrs)
-    # plt.xlabel('Epoch')
-    # plt.ylabel('Learning Rate')
-    # plt.yscale('log')
-    # plt.title('Learning Rate Schedule')
-    # plt.show()
-
-
     # create optimizer + train state
     optimizer = optax.adam(learning_rate=lr)
     state = MambaTrainState.create(
@@ -433,7 +504,7 @@ def main():
     )
     num_params = count_params(state.params)
     logger.info(f"num params: {num_params}")
-    gpu_mems = [0.0]
+    gpu_mems = []
 
     # prepare test set (once)
     test_seqs = test_truths = None
@@ -474,141 +545,35 @@ def main():
 
     @jax.jit
     def train_step(state: MambaTrainState) -> MambaTrainState:
-        # 1) split off one rng for sampling, one to carry forward
-        batch_rng, next_rng = jax.random.split(state.rng)
-        x_seq, batch_rng = sample_domain_seq_fn(
-            batch_size=rand_batch_size,
-            rng=batch_rng,
-            seq_len=args.seq_len,
-        )  # x_seq: (B, L, D)
-
-        def loss_fn(params, rng):
-            """
-            Computes the mean-squared PDE residual loss for a batch given parameters.
-
-            Returns:
-            loss:       scalar MSE of all residuals
-            new_rng:    PRNGKey to carry forward
-            """
-            # 1) split RNG for sampling vs. carry-forward
-            batch_rng, new_rng = jax.random.split(rng)
-
-            # 2) sample a fresh batch of input sequences
-            x_seq, batch_rng = sample_domain_seq_fn(
-                batch_size=rand_batch_size,
-                rng=batch_rng,
-                seq_len=args.seq_len,
-            )  # x_seq shape: (B, L, D)
-
-            # 3) helper: model output at time index l
-            def y_at_l(xt_i, l, full_seq):
-                # replace the l-th entry of full_seq with xt_i
-                seq2 = lax.dynamic_update_slice(full_seq, xt_i[None, :], (l, 0))
-                # apply your Bi-MAMBA with the passed-in params
-                y2 = mamba.apply({"params": params}, seq2[None, ...]).squeeze(0)
-                return y2[l]
-
-            # 4) compute the vector of residuals for one sequence
-
-            def residuals_for_one_sequence(full_seq, key):
-                L = full_seq.shape[0]
-
-                def one_step_res(l, xt_l, key):
-                    # build a u_fn that closes over `params` and this full_seq
-                    def u_fn(xt_i):
-                        return y_at_l(xt_i, l, full_seq)
-
-                    res_val = residual_fn(xt_l, u_fn)
-                    return res_val, key
-
-                # split into L subkeys, run across time steps
-                keys = jax.random.split(key, L)
-                resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
-                    jnp.arange(L), full_seq, keys
-                )
-                return resids, _
-
-            # 5) vectorize over the B sequences in the batch
-            outer_keys = jax.random.split(batch_rng, x_seq.shape[0])
-            all_resids, _ = jax.vmap(
-                residuals_for_one_sequence, in_axes=(0, 0), out_axes=(0, 0)
-            )(x_seq, outer_keys)  # all_resids shape: (B, L)
-
-            # 6) mean-squared residual loss
-            domain_loss = jnp.mean(all_resids ** 2)
-            _, _, x_b, t_b, batch_rng = sample_boundary_fn(
-                rand_batch_size, rand_batch_size, batch_rng
-            )
-            if eqn.time_dependent:
-                xt_b = jnp.concatenate([x_b, t_b], axis=-1)
-                u_b = mamba.apply({"params": params}, xt_b[:, None, :]).squeeze()
-            else:
-                u_b = mamba.apply({"params": params}, x_b[:, None, :]).squeeze()
-            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
-            g_b = eqn.boundary_cond(x_b, t_b, eqn_cfg)
-            boundary_loss = jnp.mean((g_b - u_b) ** 2)
-
-            loss = (
-                eqn_cfg.domain_weight * domain_loss
-                + eqn_cfg.boundary_weight * boundary_loss
-            )
-            new_rng = batch_rng
-            return loss, new_rng
-
-        # inside your jitted train_step
-        (loss, new_rng), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-            state.params, state.rng
+        (loss, new_rng), grads = jax.value_and_grad(mamba.loss_fn, has_aux=True)(
+            state.params, state.rng, mamba.apply, sample_domain_seq_fn, sample_boundary_fn, rand_batch_size, args, eqn, eqn_cfg
         )
         state = state.apply_gradients(grads=grads, rng=new_rng)
-
         return state, loss, grads
     
     losses = []
-    iters = tqdm(range(args.epochs), file=tqdm_out)
+    iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
     for step in iters:
         state, train_loss, grads = train_step(state)
         losses.append(float(train_loss))
+        save_params(state.params, step, save_dir, args.save_every, args.epochs)
 
-        if step % args.eval_every == 0:
-            if not eqn.is_traj:
-                l1_total, l2_total_sqr = 0.0, 0.0
-                for b in range(test_seqs.shape[0]):
-                    x_seq = test_seqs[b]
-                    y_true = test_truths[b]
-                    y_pred = mamba.apply({"params": state.params}, x_seq)
-                    err = y_pred - y_true
-                    l1_total += jnp.sum(jnp.abs(err))
-                    l2_total_sqr += jnp.sum(err**2)
-                l1_rel = float(l1_total / y_true_l1)
-                l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
-            else:
-                xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
-                y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
-                y_true = eqn.sol(
-                    jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg
-                )
-                l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
-                l2_rel = l1_rel
-
+        if step % args.eval_every == 0 or step == args.epochs - 1:
+            l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
             ))
-
             desc_str = (
+                f"iter={step} | "
                 f"l1_rel={l1_rel:.2e} | l2_rel={l2_rel:.2e} | "
                 f"loss={train_loss:.2e} | grad_norm={grad_norm:.2e}"
             )
-            iters.set_description(desc_str)
+            # save desc_str to log file
             logger.info(desc_str)
-
-            if args.get_mem and step == 100:
-                mem_stats = jax.local_devices()[0].memory_stats()
-                peak_mem = mem_stats['peak_bytes_in_use'] / 1024**2
-                gpu_mems.append(peak_mem)
-                break
-
-        if step % args.save_every == 0:
-            save_params(state.params, step, save_dir, args.save_every, args.epochs)
+            iters.set_description(desc_str)
+            mem_stats = jax.local_devices()[0].memory_stats()
+            peak_mem = mem_stats['peak_bytes_in_use'] / 1024**2
+            gpu_mems.append(peak_mem)
 
     # read iter/s from log file
     try:
@@ -629,31 +594,13 @@ def main():
 
     # --- Final evaluation on the full test set ---
     print("\n=== Final evaluation on test set ===")
+    l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
     if not eqn.is_traj:
-        l1_total, l2_total_sqr = 0.0, 0.0
-        for b in range(test_seqs.shape[0]):
-            x_seq = test_seqs[b]               # (B, L, D)
-            y_true = test_truths[b]            # (B, L)
-
-            y_pred = mamba.apply({"params": state.params}, x_seq)
-            # drop trailing dim if present
-            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
-                y_pred = y_pred.squeeze(-1)
-
-            err = y_pred - y_true
-            l1_total       += jnp.sum(jnp.abs(err))
-            l2_total_sqr   += jnp.sum(err**2)
-
-        l1_rel = float(l1_total / y_true_l1)
-        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
         print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
+        logger.info(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
     else:
-        xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
-        y_pred = mamba.apply({"params": state.params}, xt_zero)[0, 0]
-        y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
-        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
-        l2_rel = l1_rel
         print(f"Final → l1_rel={l1_rel:.3e}")
+        logger.info(f"Final → l1_rel={l1_rel:.3e}")
 
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
         json.dump({
@@ -699,6 +646,9 @@ def main():
 
             vmin = min(np.min(u_true), np.min(u_pred))
             vmax = max(np.max(u_true), np.max(u_pred))
+            # For diff, use symmetric colorbar spanning the superset range
+            diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
+            diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
 
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
@@ -713,7 +663,8 @@ def main():
             axes[1].set_xlabel(xlabel)
             axes[1].set_ylabel(ylabel)
 
-            sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20)
+            sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
+                                 vmin=diff_vmin, vmax=diff_vmax)
             axes[2].set_title('Difference')
             axes[2].set_xlabel(xlabel)
             axes[2].set_ylabel(ylabel)
@@ -755,6 +706,8 @@ def main():
 
                 vmin = min(np.min(u_true), np.min(u_pred))
                 vmax = max(np.max(u_true), np.max(u_pred))
+                diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
+                diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5),
                                        subplot_kw={'aspect': 'equal'})
@@ -771,7 +724,8 @@ def main():
                 axes[1].set_xlabel('dim0')
                 axes[1].set_ylabel('dim1')
 
-                sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20)
+                sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
+                                     vmin=diff_vmin, vmax=diff_vmax)
                 axes[2].set_title('Difference')
                 axes[2].set_xlabel('dim0')
                 axes[2].set_ylabel('dim1')
@@ -783,9 +737,7 @@ def main():
                 raise ValueError('plot only supports 1D or 2D embeddings for visualization')
 
         fig.suptitle(_title_for_eqn(eqn_name, eqn_cfg))
-        plt.tight_layout()
         plt.savefig(f"{save_dir}/{eqn_name}_solution.png", dpi=300)
-
     def plot_all_solutions(test_seqs, test_truths, params, mamba, dim=None,
                            xlabel='x', ylabel='u', cmap='viridis',
                            eqn_name: str = args.eqn_name):
@@ -882,6 +834,33 @@ def main():
             seq_vis = seq_vis[..., :2]
         visualize_sequences(seq_vis, x_ordering=args.x_ordering)
 
+
+
+def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
+    """Evaluate the model and return l1_rel and l2_rel."""
+    import jax
+    import jax.numpy as jnp
+    if not eqn.is_traj:
+        l1_total, l2_total_sqr = 0.0, 0.0
+        for b in range(test_seqs.shape[0]):
+            x_seq = test_seqs[b]
+            y_true = test_truths[b]
+            y_pred = mamba.apply({"params": params}, x_seq)
+            # drop trailing dim if present
+            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
+                y_pred = y_pred.squeeze(-1)
+            err = y_pred - y_true
+            l1_total += jnp.sum(jnp.abs(err))
+            l2_total_sqr += jnp.sum(err**2)
+        l1_rel = float(l1_total / y_true_l1)
+        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+    else:
+        xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
+        y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
+        y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
+        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+        l2_rel = l1_rel
+    return l1_rel, l2_rel
 
 
 if __name__ == "__main__":
