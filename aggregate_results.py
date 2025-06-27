@@ -37,18 +37,21 @@ def aggregate_results(results_dir="_results"):
     return pd.DataFrame(records)
 
 
-def plot_scatter(df, out_file="aggregate_plot.png"):
-    """Create an annotated scatter plot of l2_rel vs l1_rel."""
+def plot_scatter(df, xcol, ycol, out_file="aggregate_plot.png"):
+    """Create an annotated scatter plot of l2_rel vs l1_rel, colored by eqn_name."""
     plt.figure(figsize=(8, 6))
-    sns.scatterplot(data=df, x="l2_rel", y="l1_rel")
+    sns.scatterplot(data=df, x=xcol, y=ycol, hue="eqn_name")
+    plt.xscale('log')
+    plt.yscale('log')
 
+    # Annotate each point with the run name
     for _, row in df.iterrows():
         label = row.get("eqn_name", row["run"])
-        plt.text(row["l2_rel"], row["l1_rel"], label, fontsize=8,
+        plt.text(row[xcol], row[ycol], label, fontsize=8,
                  ha="left", va="bottom")
 
-    plt.xlabel("l2_rel")
-    plt.ylabel("l1_rel")
+    plt.xlabel(xcol)
+    plt.ylabel(ycol)
     plt.title("Evaluation Results")
     plt.tight_layout()
     plt.savefig(out_file)
@@ -58,5 +61,7 @@ def plot_scatter(df, out_file="aggregate_plot.png"):
 if __name__ == "__main__":
     df = aggregate_results()
     print(df)
+    print(df.columns)
     if not df.empty:
-        plot_scatter(df)
+        plot_scatter(df, "l1_rel", "final_loss", out_file="l1_floss.png")
+        

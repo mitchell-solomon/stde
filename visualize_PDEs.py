@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from stde.config import Config
 import stde.equations as eqns
-
+import traceback
 
 EQN_NAMES = [
     "HJB_LIN",
@@ -72,10 +72,20 @@ def visualize_PDEs(n_interior: int = 5000, n_boundary: int = 1000, seed: int = 0
     for name in EQN_NAMES:
         cfg.eqn_cfg.name = name
         eqn = getattr(eqns, name)
+        if eqn.sol is None:
+            print(f"{name} has no analytic solution, skipping.")
+            continue
+        # Skip time equations with analytic solution only defined at x=0, t=0
+        if name in ["AllenCahnTime", "SineGordonTime", "SemilinearHeatTime"]:
+            print(f"{name} analytic solution only defined at x=0, t=0; skipping.")
+            continue
         if eqn.is_traj or eqn.time_dependent:
             cfg.eqn_cfg.dim = 1
         else:
             cfg.eqn_cfg.dim = 2
+        # Initialize random coeffs if needed
+        if getattr(eqn, "random_coeff", False):
+            cfg.eqn_cfg.coeffs = np.random.randn(1, cfg.eqn_cfg.dim)
         sample_domain_fn = eqn.get_sample_domain_fn(cfg.eqn_cfg)
         if eqn.is_traj:
             x, t, xb, tb, rng = sample_domain_fn(n_interior, cfg.eqn_cfg.n_t, rng)
@@ -85,9 +95,11 @@ def visualize_PDEs(n_interior: int = 5000, n_boundary: int = 1000, seed: int = 0
             x, t, xb, tb, rng = sample_domain_fn(n_interior, n_boundary, rng)
         # try exact solution first, fallback to boundary condition
         try:
-
             vals = _safe_eval(eqn.sol, x, t, cfg.eqn_cfg)
         except Exception:
+            # print the exception
+            traceback.print_exc()
+            # print(f'{name} failed to evaluate solution, falling back to boundary condition')
             vals = _safe_eval(eqn.boundary_cond, x, t, cfg.eqn_cfg)
 
         vals_b = _safe_eval(eqn.boundary_cond, xb, tb, cfg.eqn_cfg)
@@ -118,7 +130,8 @@ def visualize_PDEs(n_interior: int = 5000, n_boundary: int = 1000, seed: int = 0
         ax.legend()
         ax.set_title(_title_for_eqn(name, cfg))
         plt.tight_layout()
-        plt.show()
+        plt.savefig(f"pde_solution_plots/{name}_solution.png", dpi=300)
+        # plt.show()
 
 
 if __name__ == "__main__":

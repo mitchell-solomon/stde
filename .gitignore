@@ -1,8 +1,9 @@
 *.pyc
 /_logs/
+/logs/
 /_exp/
 /wandb/
 /stde.egg-info/
 /_results/
 /_mem_results/
-pde_solution_plots
+/pde_solution_plots/
