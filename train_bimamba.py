@@ -42,15 +42,26 @@ def count_params(params):
     return int(sum(np.prod(p.shape) for p in flat))
 
 
-def save_params(params, step: int, save_dir: str, save_every: int, epochs: int):
+def save_params(
+    params,
+    step: int,
+    save_dir: str,
+    save_every: int,
+    epochs: int,
+    *,
+    is_best: bool = False,
+):
     if step == 0:
         with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(vars(args), f, indent=2)
     if step == epochs - 1:
-        with open(os.path.join(save_dir, f"params_final.pkl"), "wb") as f:
+        with open(os.path.join(save_dir, "params_final.pkl"), "wb") as f:
             pickle.dump(params, f)
     if step % save_every == 0:
         with open(os.path.join(save_dir, f"params_{step}.pkl"), "wb") as f:
+            pickle.dump(params, f)
+    if is_best:
+        with open(os.path.join(save_dir, "params_lowest_loss.pkl"), "wb") as f:
             pickle.dump(params, f)
 
 
@@ -619,11 +630,24 @@ def main():
         return state, loss, grads
     
     losses = []
+    best_loss = float("inf")
     iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
     for step in iters:
         state, train_loss, grads = train_step(state)
-        losses.append(float(train_loss))
-        save_params(state.params, step, save_dir, args.save_every, args.epochs)
+        train_loss_f = float(train_loss)
+        losses.append(train_loss_f)
+        is_best = False
+        if train_loss_f < best_loss:
+            best_loss = train_loss_f
+            is_best = True
+        save_params(
+            state.params,
+            step,
+            save_dir,
+            args.save_every,
+            args.epochs,
+            is_best=is_best,
+        )
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
             l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
@@ -660,8 +684,23 @@ def main():
     # plt.show()
 
     # --- Final evaluation on the full test set ---
+    best_params_path = os.path.join(save_dir, "params_lowest_loss.pkl")
+    if os.path.exists(best_params_path):
+        with open(best_params_path, "rb") as f:
+            best_params = pickle.load(f)
+        state = state.replace(params=best_params)
     print("\n=== Final evaluation on test set ===")
-    l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
+    l1_rel, l2_rel = eval_model(
+        mamba,
+        state.params,
+        eqn,
+        eqn_cfg,
+        test_seqs,
+        test_truths,
+        y_true_l1,
+        y_true_l2,
+        args,
+    )
     if not eqn.is_traj:
         print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
         logger.info(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
@@ -670,14 +709,19 @@ def main():
         logger.info(f"Final → l1_rel={l1_rel:.3e}")
 
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
-        json.dump({
-            "l1_rel": l1_rel,
-            "l2_rel": l2_rel,
-            "iter_per_s": iter_per_s,
-            "peak_gpu_mem": max(gpu_mems),
-            "num_params": num_params,
-            "final_loss": float(losses[-1]) if losses else 0.0
-        }, f, indent=2)
+        json.dump(
+            {
+                "l1_rel": l1_rel,
+                "l2_rel": l2_rel,
+                "iter_per_s": iter_per_s,
+                "peak_gpu_mem": max(gpu_mems),
+                "num_params": num_params,
+                "final_loss": float(losses[-1]) if losses else 0.0,
+                "best_loss": best_loss,
+            },
+            f,
+            indent=2,
+        )
 
 
     # --- Plotting ---
