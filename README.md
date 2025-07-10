@@ -61,8 +61,9 @@ core functionality lives inside the `stde/` package while scripts such as
 methods include:
 
 - **`sample_domain_seq_fn`** – samples sequences of domain points via the
-  equation-specific samplers. If the equation has a temporal dimension the
-  sequence axis corresponds to time.
+  equation-specific samplers. With the `--use_seed_seq` flag sequences are
+  drawn in a small neighbourhood around random seed points. If the equation has
+  a temporal dimension the sequence axis corresponds to time.
 - **`residual_fn`** – computes residuals by delegating to the selected equation
   object.
 - **`BiMambaPINN`** – a Flax module stacking Bi‑MAMBA blocks and enforcing

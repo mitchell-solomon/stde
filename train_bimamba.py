@@ -81,6 +81,11 @@ parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
+parser.add_argument(
+    "--use_seed_seq",
+    action="store_true",
+    help="Sample each sequence around random seed points rather than independently",
+)
 parser.add_argument("--x_radius", type=float, default=1.0)
 parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", 
                     help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
@@ -235,11 +240,12 @@ logger.info(f"Args:\n{args_str}\n")
 sample_domain_fn = None  # placeholder, defined after equation is loaded
 
 
-@partial(jax.jit, static_argnames=("batch_size", "seq_len"))
+@partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))
 def sample_domain_seq_fn(
     batch_size: int,
     rng: jax.Array,
     seq_len: int,
+    use_seed: bool = False,
 ) -> Tuple[jnp.ndarray, jax.Array]:
     """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
 
@@ -248,21 +254,43 @@ def sample_domain_seq_fn(
     concatenated such that the model receives ``(x, t)`` as features.
     """
 
-    if eqn.is_traj:
-        x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+    if use_seed and not eqn.is_traj:
+        # sample seed points then draw a short sequence around each seed
+        x_seed, t_seed, _, _, rng = sample_domain_fn(batch_size, 0, rng)
+        keys = jax.random.split(
+            rng, 3 if eqn.time_dependent and t_seed is not None else 2
+        )
+        rng = keys[-1]
+        x_noise = 0.1 * args.x_radius * jax.random.normal(
+            keys[0], (batch_size, seq_len, args.spatial_dim)
+        )
+        x_seq = x_seed[:, None, :] + x_noise
+        if eqn.time_dependent and t_seed is not None:
+            t_noise = 0.1 * eqn_cfg.T * jax.random.normal(
+                keys[1], (batch_size, seq_len, 1)
+            )
+            t_seq = t_seed[:, None, :] + t_noise
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
     else:
-        x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+        if eqn.is_traj:
+            x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+        else:
+            x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
 
-    # reshape to sequences
-    x_seq = x.reshape((batch_size, seq_len, -1))
-    if eqn.time_dependent and t is not None:
-        t_seq = t.reshape((batch_size, seq_len, -1))
-        # order each sequence by increasing time so that seq axis is temporal
-        sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
-        x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
-        t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
-        x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
-    return x_seq, rng
+        # reshape to sequences
+        x_seq = x.reshape((batch_size, seq_len, -1))
+        if eqn.time_dependent and t is not None:
+            t_seq = t.reshape((batch_size, seq_len, -1))
+            # order each sequence by increasing time so that seq axis is temporal
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
 
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
@@ -403,6 +431,7 @@ def main():
                 batch_size=n_pts,
                 rng=rng,
                 seq_len=seq_len,
+                use_seed=args.use_seed_seq,
             )
 
             table = nn.tabulate(
@@ -418,6 +447,7 @@ def main():
                 batch_size=rand_batch_size,
                 rng=batch_rng,
                 seq_len=args.seq_len,
+                use_seed=args.use_seed_seq,
             )
             def y_at_l(xt_i, l, full_seq):
                 seq2 = lax.dynamic_update_slice(full_seq, xt_i[None, :], (l, 0))
@@ -474,6 +504,7 @@ def main():
         batch_size=2,
         rng=init_rng,
         seq_len=args.seq_len,
+        use_seed=args.use_seed_seq,
     )
     flax_vars = mamba.init(init_rng, x_dummy)
 
@@ -519,6 +550,7 @@ def main():
                 batch_size=args.test_batch_size,
                 rng=sample_rng,
                 seq_len=args.seq_len,
+                use_seed=args.use_seed_seq,
             )
             # collapse batch & seq dims to analytical solver
             B, L, D = x_test_seq.shape
