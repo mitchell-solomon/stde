@@ -62,6 +62,7 @@ PY
                 --N_test "$N_TEST" \
                 --test_batch_size "$TEST_BATCH_SIZE" \
                 --seq_len "$SEQ_LEN" \
+                --use_seed_seq \
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"
             else
