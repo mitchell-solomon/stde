@@ -62,8 +62,10 @@ methods include:
 
 - **`sample_domain_seq_fn`** – samples sequences of domain points via the
   equation-specific samplers. With the `--use_seed_seq` flag sequences are
+
   drawn in a small neighbourhood (10% of the domain width) around random seed
   points. If the equation has
+
   a temporal dimension the sequence axis corresponds to time.
 - **`residual_fn`** – computes residuals by delegating to the selected equation
   object.

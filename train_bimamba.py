@@ -239,6 +239,57 @@ logger.info(f"Args:\n{args_str}\n")
 
 sample_domain_fn = None  # placeholder, defined after equation is loaded
 
+@partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))
+def sample_domain_seq_fn(
+    batch_size: int,
+    rng: jax.Array,
+    seq_len: int,
+    use_seed: bool = False,
+) -> Tuple[jnp.ndarray, jax.Array]:
+    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
+
+    If the equation is time dependent, the returned sequence dimension
+    corresponds to the temporal axis. The sampled ``x`` and ``t`` are
+    concatenated such that the model receives ``(x, t)`` as features.
+    """
+
+    if use_seed and not eqn.is_traj:
+        # sample seed points then draw a short sequence around each seed
+        x_seed, t_seed, _, _, rng = sample_domain_fn(batch_size, 0, rng)
+        keys = jax.random.split(
+            rng, 3 if eqn.time_dependent and t_seed is not None else 2
+        )
+        rng = keys[-1]
+        x_noise = 0.1 * args.x_radius * jax.random.normal(
+            keys[0], (batch_size, seq_len, args.spatial_dim)
+        )
+        x_seq = x_seed[:, None, :] + x_noise
+        if eqn.time_dependent and t_seed is not None:
+            t_noise = 0.1 * eqn_cfg.T * jax.random.normal(
+                keys[1], (batch_size, seq_len, 1)
+            )
+            t_seq = t_seed[:, None, :] + t_noise
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
+    else:
+        if eqn.is_traj:
+            x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+        else:
+            x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+
+        # reshape to sequences
+        x_seq = x.reshape((batch_size, seq_len, -1))
+        if eqn.time_dependent and t is not None:
+            t_seq = t.reshape((batch_size, seq_len, -1))
+            # order each sequence by increasing time so that seq axis is temporal
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
 # -----------------------------------------------------------------------------
