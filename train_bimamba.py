@@ -203,32 +203,6 @@ hk.next_rng_key = lambda: next(rng_seq)
 
 np.random.seed(args.SEED)
 
-# create a dir with the run name where we save all results
-save_dir = f"_results/{args.run_name}"
-os.makedirs(save_dir, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# logging setup
-# ---------------------------------------------------------------------------
-log_file = os.path.join(save_dir, "train.log")
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-fh = logging.FileHandler(log_file, mode="w")
-fh.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(fh)
-
-# --- Spatial dimension requirements checks ---
-# These equations require spatial_dim == 1
-one_dim_eqns = ["SemilinearHeatTime", "SineGordonTime", "AllenCahnTime"]
-allowed_dims = {10, 100, 1000, 10000}
-if args.eqn_name in one_dim_eqns and args.spatial_dim not in allowed_dims:
-    logger.error(f"ERROR: {args.eqn_name} only supports spatial_dim in {sorted(allowed_dims)}, but got spatial_dim={args.spatial_dim}")
-    exit(1)
-if "Threebody" in args.eqn_name and args.spatial_dim < 3:
-    logger.error(f"ERROR: {args.eqn_name} requires spatial_dim >= 3, but got spatial_dim={args.spatial_dim}")
-    exit(1)
-
-
 # log args
 args_str = pprint.pformat(vars(args), indent=2)
 logger.info(f"Args:\n{args_str}\n")
@@ -260,12 +234,12 @@ def sample_domain_seq_fn(
             rng, 3 if eqn.time_dependent and t_seed is not None else 2
         )
         rng = keys[-1]
-        x_noise = 0.1 * args.x_radius * jax.random.normal(
+        x_noise = 0.001 * args.x_radius * jax.random.normal(
             keys[0], (batch_size, seq_len, args.spatial_dim)
         )
         x_seq = x_seed[:, None, :] + x_noise
         if eqn.time_dependent and t_seed is not None:
-            t_noise = 0.1 * eqn_cfg.T * jax.random.normal(
+            t_noise = 0.001 * eqn_cfg.T * jax.random.normal(
                 keys[1], (batch_size, seq_len, 1)
             )
             t_seq = t_seed[:, None, :] + t_noise
@@ -931,8 +905,6 @@ def main():
 
 def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
     """Evaluate the model and return l1_rel and l2_rel."""
-    import jax
-    import jax.numpy as jnp
     if not eqn.is_traj:
         l1_total, l2_total_sqr = 0.0, 0.0
         for b in range(test_seqs.shape[0]):

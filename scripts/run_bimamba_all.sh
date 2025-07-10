@@ -10,10 +10,10 @@ set -u
 # Main arguments for train_bimamba.py (edit as needed)
 EPOCHS=10000
 EVAL_EVERY=5000
-LR=1e-3
+LR=1e-4
 N_TEST=2000
 TEST_BATCH_SIZE=20
-SEQ_LEN=3
+SEQ_LEN=10
 
 # gather PDE names from the config dataclass
 PDE_NAMES=$(python - <<'PY'
