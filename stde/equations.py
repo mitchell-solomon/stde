@@ -551,7 +551,7 @@ def PoissonHouman_sol(
   t: types.T,
   cfg: EqnConfig,
 ) -> Float[types.NPArray, "*batch"]:
-  t1 = cfg.max_radius - jnp.sum(x**2, -1)
+  t1 = cfg.max_radius**2 - jnp.sum(x**2, -1)
   x1 = x[..., :-1]
   x2 = x[..., 1:]
   coeffs = jnp.tanh(4 * jnp.arange(cfg.dim - 1) / (cfg.dim - 1) - 2)
@@ -563,7 +563,7 @@ def PoissonHouman_sol(
 
 PoissonHouman: Equation = Equation(
   get_inhomo_res_fn_from_sol(Poisson_op, PoissonHouman_sol),
-  Poisson_boundary_cond,
+  PoissonHouman_sol,
   ZeroOnUnitBall_enforce_boundary,
   PoissonHouman_sol,
   unit_ball_sample_domain_fn,
@@ -660,7 +660,7 @@ def Poisson_twobody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 PoissonTwobody: Equation = Equation(
   get_inhomo_res_fn(Poisson_op, Poisson_twobody_inhomo_exact),
-  Poisson_boundary_cond,
+  twobody_sol,
   ZeroOnUnitBall_enforce_boundary,
   twobody_sol,
   unit_ball_sample_domain_fn,
@@ -676,7 +676,7 @@ def Poisson_threebody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 PoissonThreebody: Equation = Equation(
   get_inhomo_res_fn(Poisson_op, Poisson_threebody_inhomo_exact),
-  Poisson_boundary_cond,
+  threebody_sol,
   ZeroOnUnitBall_enforce_boundary,
   threebody_sol,
   unit_ball_sample_domain_fn,
@@ -709,7 +709,7 @@ def AllenCahn_twobody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 AllenCahnTwobody: Equation = Equation(
   get_inhomo_res_fn(AllenCahn_op, AllenCahn_twobody_inhomo_exact),
-  Poisson_boundary_cond,
+  twobody_sol,
   ZeroOnUnitBall_enforce_boundary,
   twobody_sol,
   unit_ball_sample_domain_fn,
@@ -929,7 +929,7 @@ def AllenCahn_threebody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 AllenCahnThreebody: Equation = Equation(
   get_inhomo_res_fn(AllenCahn_op, AllenCahn_threebody_inhomo_exact),
-  Poisson_boundary_cond,
+  threebody_sol,
   ZeroOnUnitBall_enforce_boundary,
   threebody_sol,
   unit_ball_sample_domain_fn,
@@ -977,7 +977,7 @@ def SineGordon_twobody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 SineGordonTwobody: Equation = Equation(
   get_inhomo_res_fn(SineGordon_op, SineGordon_twobody_inhomo_exact),
-  Poisson_boundary_cond,
+  twobody_sol,
   ZeroOnUnitBall_enforce_boundary,
   twobody_sol,
   unit_ball_sample_domain_fn,
@@ -1053,7 +1053,7 @@ def SineGordon_threebody_inhomo_exact(x: types.x_like, cfg: EqnConfig):
 
 SineGordonThreebody: Equation = Equation(
   get_inhomo_res_fn(SineGordon_op, SineGordon_threebody_inhomo_exact),
-  Poisson_boundary_cond,
+  threebody_sol,
   ZeroOnUnitBall_enforce_boundary,
   threebody_sol,
   unit_ball_sample_domain_fn,
@@ -1292,7 +1292,7 @@ def KdV2d_boundary_cond(
   u(x, 0)   = \sum_i sinh(x_i)
   u_t(x, 0) = 0
   """
-  return 0.
+  return KdV2d_sol(x, t, cfg)
 
 
 def KdV2d_enforce_boundary(
@@ -1471,7 +1471,7 @@ def highord1d_boundary_cond(
   u(x, 0)   = \sum_i sinh(x_i)
   u_t(x, 0) = 0
   """
-  return 0.
+  return highord1d_sol(x, t, cfg)
 
 
 def highord1d_enforce_boundary(
