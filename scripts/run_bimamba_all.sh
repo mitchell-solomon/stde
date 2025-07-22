@@ -13,7 +13,7 @@ EVAL_EVERY=5000
 LR=1e-4
 N_TEST=2000
 TEST_BATCH_SIZE=20
-SEQ_LEN=10
+SEQ_LEN=4
 
 # gather PDE names from the config dataclass
 PDE_NAMES=$(python - <<'PY'
@@ -47,7 +47,7 @@ PY
     fi
 
     for DIM in "${DIMS[@]}"; do
-        for METHOD in sparse_stde stacked; do
+        for METHOD in sparse_stde; do
             LOG_FILE="logs/${PDE}_${METHOD}_d${DIM}.log"
             RUN_NAME="${PDE}_${METHOD}_d${DIM}"
             echo "Running $PDE with $METHOD and dim $DIM" | tee -a "$LOG_FILE"
@@ -63,6 +63,10 @@ PY
                 --test_batch_size "$TEST_BATCH_SIZE" \
                 --seq_len "$SEQ_LEN" \
                 --use_seed_seq \
+                --complement \
+                --tie_in_proj \
+                --tie_gate \
+                --bidirectional \
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"
             else
