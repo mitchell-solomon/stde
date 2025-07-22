@@ -42,15 +42,26 @@ def count_params(params):
     return int(sum(np.prod(p.shape) for p in flat))
 
 
-def save_params(params, step: int, save_dir: str, save_every: int, epochs: int):
+def save_params(
+    params,
+    step: int,
+    save_dir: str,
+    save_every: int,
+    epochs: int,
+    *,
+    is_best: bool = False,
+):
     if step == 0:
         with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(vars(args), f, indent=2)
     if step == epochs - 1:
-        with open(os.path.join(save_dir, f"params_final.pkl"), "wb") as f:
+        with open(os.path.join(save_dir, "params_final.pkl"), "wb") as f:
             pickle.dump(params, f)
     if step % save_every == 0:
         with open(os.path.join(save_dir, f"params_{step}.pkl"), "wb") as f:
+            pickle.dump(params, f)
+    if is_best:
+        with open(os.path.join(save_dir, "params_lowest_loss.pkl"), "wb") as f:
             pickle.dump(params, f)
 
 
@@ -92,6 +103,7 @@ parser.add_argument(
     default=0.01,
     help="Relative neighbourhood size for --use_seed_seq as a fraction of the domain width",
 )
+
 parser.add_argument("--x_radius", type=float, default=1.0)
 parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", 
                     help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
@@ -209,32 +221,6 @@ hk.next_rng_key = lambda: next(rng_seq)
 
 np.random.seed(args.SEED)
 
-# create a dir with the run name where we save all results
-save_dir = f"_results/{args.run_name}"
-os.makedirs(save_dir, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# logging setup
-# ---------------------------------------------------------------------------
-log_file = os.path.join(save_dir, "train.log")
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-fh = logging.FileHandler(log_file, mode="w")
-fh.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(fh)
-
-# --- Spatial dimension requirements checks ---
-# These equations require spatial_dim == 1
-one_dim_eqns = ["SemilinearHeatTime", "SineGordonTime", "AllenCahnTime"]
-allowed_dims = {10, 100, 1000, 10000}
-if args.eqn_name in one_dim_eqns and args.spatial_dim not in allowed_dims:
-    logger.error(f"ERROR: {args.eqn_name} only supports spatial_dim in {sorted(allowed_dims)}, but got spatial_dim={args.spatial_dim}")
-    exit(1)
-if "Threebody" in args.eqn_name and args.spatial_dim < 3:
-    logger.error(f"ERROR: {args.eqn_name} requires spatial_dim >= 3, but got spatial_dim={args.spatial_dim}")
-    exit(1)
-
-
 # log args
 args_str = pprint.pformat(vars(args), indent=2)
 logger.info(f"Args:\n{args_str}\n")
@@ -244,6 +230,59 @@ logger.info(f"Args:\n{args_str}\n")
 # -----------------------------------------------------------------------------
 
 sample_domain_fn = None  # placeholder, defined after equation is loaded
+
+
+@partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))
+def sample_domain_seq_fn(
+    batch_size: int,
+    rng: jax.Array,
+    seq_len: int,
+    use_seed: bool = False,
+) -> Tuple[jnp.ndarray, jax.Array]:
+    """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
+
+    If the equation is time dependent, the returned sequence dimension
+    corresponds to the temporal axis. The sampled ``x`` and ``t`` are
+    concatenated such that the model receives ``(x, t)`` as features.
+    """
+
+    if use_seed and not eqn.is_traj:
+        # sample seed points then draw a short sequence around each seed
+        x_seed, t_seed, _, _, rng = sample_domain_fn(batch_size, 0, rng)
+        keys = jax.random.split(
+            rng, 3 if eqn.time_dependent and t_seed is not None else 2
+        )
+        rng = keys[-1]
+        x_noise = 0.001 * args.x_radius * jax.random.normal(
+            keys[0], (batch_size, seq_len, args.spatial_dim)
+        )
+        x_seq = x_seed[:, None, :] + x_noise
+        if eqn.time_dependent and t_seed is not None:
+            t_noise = 0.001 * eqn_cfg.T * jax.random.normal(
+                keys[1], (batch_size, seq_len, 1)
+            )
+            t_seq = t_seed[:, None, :] + t_noise
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
+    else:
+        if eqn.is_traj:
+            x, t, _, _, rng = sample_domain_fn(batch_size, seq_len - 1, rng)
+        else:
+            x, t, _, _, rng = sample_domain_fn(batch_size * seq_len, 0, rng)
+
+        # reshape to sequences
+        x_seq = x.reshape((batch_size, seq_len, -1))
+        if eqn.time_dependent and t is not None:
+            t_seq = t.reshape((batch_size, seq_len, -1))
+            # order each sequence by increasing time so that seq axis is temporal
+            sort_idx = jnp.argsort(t_seq[..., 0], axis=1)
+            x_seq = jnp.take_along_axis(x_seq, sort_idx[..., None], axis=1)
+            t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
+            x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
+        return x_seq, rng
 
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
@@ -279,8 +318,10 @@ if eqn.time_dependent and t_tmp is not None:
     t_span = float(jnp.max(t_tmp) - jnp.min(t_tmp))
 else:
     t_span = 0.0
+
 seed_x_sigma = args.seed_frac * x_span
 seed_t_sigma = args.seed_frac * t_span
+
 
 
 @partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))
@@ -600,11 +641,24 @@ def main():
         return state, loss, grads
     
     losses = []
+    best_loss = float("inf")
     iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
     for step in iters:
         state, train_loss, grads = train_step(state)
-        losses.append(float(train_loss))
-        save_params(state.params, step, save_dir, args.save_every, args.epochs)
+        train_loss_f = float(train_loss)
+        losses.append(train_loss_f)
+        is_best = False
+        if train_loss_f < best_loss:
+            best_loss = train_loss_f
+            is_best = True
+        save_params(
+            state.params,
+            step,
+            save_dir,
+            args.save_every,
+            args.epochs,
+            is_best=is_best,
+        )
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
             l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
@@ -641,8 +695,23 @@ def main():
     # plt.show()
 
     # --- Final evaluation on the full test set ---
+    best_params_path = os.path.join(save_dir, "params_lowest_loss.pkl")
+    if os.path.exists(best_params_path):
+        with open(best_params_path, "rb") as f:
+            best_params = pickle.load(f)
+        state = state.replace(params=best_params)
     print("\n=== Final evaluation on test set ===")
-    l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
+    l1_rel, l2_rel = eval_model(
+        mamba,
+        state.params,
+        eqn,
+        eqn_cfg,
+        test_seqs,
+        test_truths,
+        y_true_l1,
+        y_true_l2,
+        args,
+    )
     if not eqn.is_traj:
         print(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
         logger.info(f"Final → l1_rel={l1_rel:.3e} | l2_rel={l2_rel:.3e}")
@@ -651,14 +720,19 @@ def main():
         logger.info(f"Final → l1_rel={l1_rel:.3e}")
 
     with open(f"{save_dir}/final_eval_results.json", "w") as f:
-        json.dump({
-            "l1_rel": l1_rel,
-            "l2_rel": l2_rel,
-            "iter_per_s": iter_per_s,
-            "peak_gpu_mem": max(gpu_mems),
-            "num_params": num_params,
-            "final_loss": float(losses[-1]) if losses else 0.0
-        }, f, indent=2)
+        json.dump(
+            {
+                "l1_rel": l1_rel,
+                "l2_rel": l2_rel,
+                "iter_per_s": iter_per_s,
+                "peak_gpu_mem": max(gpu_mems),
+                "num_params": num_params,
+                "final_loss": float(losses[-1]) if losses else 0.0,
+                "best_loss": best_loss,
+            },
+            f,
+            indent=2,
+        )
 
 
     # --- Plotting ---
@@ -886,8 +960,6 @@ def main():
 
 def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
     """Evaluate the model and return l1_rel and l2_rel."""
-    import jax
-    import jax.numpy as jnp
     if not eqn.is_traj:
         l1_total, l2_total_sqr = 0.0, 0.0
         for b in range(test_seqs.shape[0]):

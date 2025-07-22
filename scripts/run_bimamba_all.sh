@@ -10,11 +10,13 @@ set -u
 # Main arguments for train_bimamba.py (edit as needed)
 EPOCHS=10000
 EVAL_EVERY=5000
-LR=1e-3
+LR=1e-4
 N_TEST=2000
 TEST_BATCH_SIZE=20
+
 SEQ_LEN=3
 SEED_FRAC=0.01
+
 
 # gather PDE names from the config dataclass
 PDE_NAMES=$(python - <<'PY'
@@ -64,6 +66,7 @@ PY
                 --test_batch_size "$TEST_BATCH_SIZE" \
                 --seq_len "$SEQ_LEN" \
                 --seed_frac "$SEED_FRAC" \
+
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"
             else
