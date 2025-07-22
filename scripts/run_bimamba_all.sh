@@ -65,12 +65,11 @@ PY
                 --N_test "$N_TEST" \
                 --test_batch_size "$TEST_BATCH_SIZE" \
                 --seq_len "$SEQ_LEN" \
-                --use_seed_seq \
                 --complement \
                 --tie_in_proj \
                 --tie_gate \
                 --bidirectional \
---seed_frac "$SEED_FRAC" \
+                --seed_frac "$SEED_FRAC" \
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"
             else
