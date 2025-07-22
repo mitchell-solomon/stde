@@ -3,7 +3,7 @@ from typing import Callable, Sequence, Tuple
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from folx import forward_laplacian
+# from folx import forward_laplacian
 from jax import lax
 from jax.experimental import jet
 from jaxtyping import Array, Float, Integer
