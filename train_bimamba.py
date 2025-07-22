@@ -97,6 +97,13 @@ parser.add_argument(
     action="store_true",
     help="Sample each sequence around random seed points rather than independently",
 )
+parser.add_argument(
+    "--seed_frac",
+    type=float,
+    default=0.01,
+    help="Relative neighbourhood size for --use_seed_seq as a fraction of the domain width",
+)
+
 parser.add_argument("--x_radius", type=float, default=1.0)
 parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", 
                     help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
@@ -224,6 +231,7 @@ logger.info(f"Args:\n{args_str}\n")
 
 sample_domain_fn = None  # placeholder, defined after equation is loaded
 
+
 @partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))
 def sample_domain_seq_fn(
     batch_size: int,
@@ -275,6 +283,7 @@ def sample_domain_seq_fn(
             t_seq = jnp.take_along_axis(t_seq, sort_idx[..., None], axis=1)
             x_seq = jnp.concatenate([x_seq, t_seq], axis=-1)
         return x_seq, rng
+
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
 # -----------------------------------------------------------------------------
@@ -309,8 +318,10 @@ if eqn.time_dependent and t_tmp is not None:
     t_span = float(jnp.max(t_tmp) - jnp.min(t_tmp))
 else:
     t_span = 0.0
-seed_x_sigma = 0.1 * x_span
-seed_t_sigma = 0.1 * t_span
+
+seed_x_sigma = args.seed_frac * x_span
+seed_t_sigma = args.seed_frac * t_span
+
 
 
 @partial(jax.jit, static_argnames=("batch_size", "seq_len", "use_seed"))

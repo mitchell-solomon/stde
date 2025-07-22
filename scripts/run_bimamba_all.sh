@@ -13,7 +13,10 @@ EVAL_EVERY=5000
 LR=1e-4
 N_TEST=2000
 TEST_BATCH_SIZE=20
-SEQ_LEN=10
+
+SEQ_LEN=3
+SEED_FRAC=0.01
+
 
 # gather PDE names from the config dataclass
 PDE_NAMES=$(python - <<'PY'
@@ -62,7 +65,8 @@ PY
                 --N_test "$N_TEST" \
                 --test_batch_size "$TEST_BATCH_SIZE" \
                 --seq_len "$SEQ_LEN" \
-                --use_seed_seq \
+                --seed_frac "$SEED_FRAC" \
+
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"
             else
