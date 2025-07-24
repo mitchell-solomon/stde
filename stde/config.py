@@ -20,6 +20,7 @@ class EqnConfig:
     # "BSB",
     "Wave",
     "Poisson",
+    "NLS",
     # "PoissonHouman",
     # "PoissonTwobody",
     # "PoissonTwobodyG",

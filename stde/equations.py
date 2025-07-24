@@ -397,12 +397,14 @@ def unit_ball_sample_domain_fn(cfg: EqnConfig) -> Callable:
 
 
 Wave: Equation = Equation(
-  Wave_res, 
-  Wave_boundary_cond, 
-  Wave_enforce_boundary, 
+  Wave_res,
+  Wave_boundary_cond,
+  Wave_enforce_boundary,
   Wave_sol,
   unit_ball_sample_domain_fn
 )
+
+
 
 
 def Poisson_sol(
@@ -497,6 +499,78 @@ def identity_fn(
   cfg: EqnConfig,
 ):
   return u_val
+
+
+def NLS_res(
+  x: types.x_like,
+  t: types.t_like,
+  u: types.U,
+  cfg: EqnConfig,
+) -> Float[Array, "1"]:
+  """Residual of the 1D cubic Nonlinear Schrödinger equation.
+
+  .. math:: i u_t + u_{xx} + |u|^2 u = 0
+  """
+  x0 = jnp.squeeze(x).astype(jnp.complex64)
+  t0 = jnp.squeeze(t).astype(jnp.complex64)
+
+  u_val = u(x, t)
+  u_xx = jax.hessian(lambda x_: u(jnp.array([x_]), t), holomorphic=True)(x0)
+  u_t = jax.grad(lambda tt: u(x, jnp.array([tt])), holomorphic=True)(t0)
+
+  res = 1j * u_t + u_xx + jnp.abs(u_val) ** 2 * u_val
+  return jnp.squeeze(res)
+
+
+def NLS_sol(
+  x: types.X,
+  t: types.T,
+  cfg: EqnConfig,
+) -> Float[types.NPArray, "*batch"]:
+  """Plane wave solution periodic on ``[-5,5]``."""
+  k = jnp.pi / 5.0
+  A = 1.0
+  w = k**2 - A**2
+  phase = k * jnp.squeeze(x) - w * jnp.squeeze(t)
+  return A * jnp.exp(1j * phase)
+
+
+def NLS_boundary_cond(
+  x: types.X,
+  t: types.T,
+  cfg: EqnConfig,
+) -> Float[types.NPArray, "*batch"]:
+  return jnp.zeros(x.shape[0], dtype=jnp.complex64)
+
+
+def NLS_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
+  """Sample ``x`` from ``[-5,5]`` and ``t`` from ``[0, \pi/2]``."""
+
+  @partial(jax.jit, static_argnames=["n_pts", "n_pts_boundary"])
+  def sample_domain(
+    n_pts: int, n_pts_boundary: int, rng: jax.Array
+  ) -> Tuple[types.X, types.T, types.X, types.T, jax.Array]:
+    keys = jax.random.split(rng, 5)
+    x = jax.random.uniform(keys[0], (n_pts, cfg.dim), minval=-5.0, maxval=5.0)
+    t = jax.random.uniform(keys[1], (n_pts, 1), minval=0.0, maxval=jnp.pi / 2)
+    x_b = jax.random.uniform(
+      keys[2], (n_pts_boundary, cfg.dim), minval=-5.0, maxval=5.0
+    )
+    t_b = jax.random.uniform(
+      keys[3], (n_pts_boundary, 1), minval=0.0, maxval=jnp.pi / 2
+    )
+    return x, t, x_b, t_b, keys[4]
+
+  return sample_domain
+
+
+NLS: Equation = Equation(
+  NLS_res,
+  NLS_boundary_cond,
+  identity_fn,
+  NLS_sol,
+  NLS_get_sample_domain_fn,
+)
 
 
 def Poisson_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
