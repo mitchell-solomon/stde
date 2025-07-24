@@ -75,6 +75,13 @@ methods include:
 - **`train_step`** – performs a single optimization step (JAX jit/vmap) and
   computes domain and boundary losses.
 
+Additional CLI flags for ablations include:
+
+- `--backbone {MLP,Mamba}` to choose the network type.
+- `--hess_diag_method` to select the Hessian diagonal estimator.
+- `--no_stde` to disable STDE entirely.
+- `--ad_mode {forward,reverse}` to pick the AD mode when STDE is disabled.
+
 Results and model checkpoints are stored under `_results/`.
 
 ## Available PDEs
