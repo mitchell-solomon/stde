@@ -1265,6 +1265,22 @@ KdV: Equation = Equation(
 )
 
 
+def KdV_mass(x: types.X, t: types.T, u_fn: Callable[[types.X, types.T], jax.Array], cfg: EqnConfig) -> jax.Array:
+  """Approximate conserved mass for KdV by Monte Carlo sampling."""
+  u_val = jax.vmap(u_fn)(x, t)
+  return jnp.mean(u_val)
+
+
+def KdV_energy(x: types.X, t: types.T, u_fn: Callable[[types.X, types.T], jax.Array], cfg: EqnConfig) -> jax.Array:
+  """Approximate conserved energy for KdV by Monte Carlo sampling."""
+  grad_fn = jax.vmap(jax.grad(lambda xx, tt: u_fn(xx, tt), argnums=0))
+  u_val = jax.vmap(u_fn)(x, t)
+  u_x = grad_fn(x, t)
+  energy_density = 0.5 * jnp.sum(u_x**2, axis=-1) - (u_val**3) / 6.0
+  return jnp.mean(energy_density)
+
+
+
 def KdV2d_res(
   xy: types.x_like,
   t: types.t_like,
