@@ -397,12 +397,14 @@ def unit_ball_sample_domain_fn(cfg: EqnConfig) -> Callable:
 
 
 Wave: Equation = Equation(
-  Wave_res, 
-  Wave_boundary_cond, 
-  Wave_enforce_boundary, 
+  Wave_res,
+  Wave_boundary_cond,
+  Wave_enforce_boundary,
   Wave_sol,
   unit_ball_sample_domain_fn
 )
+
+
 
 
 def Poisson_sol(
@@ -499,6 +501,78 @@ def identity_fn(
   return u_val
 
 
+def NLS_res(
+  x: types.x_like,
+  t: types.t_like,
+  u: types.U,
+  cfg: EqnConfig,
+) -> Float[Array, "1"]:
+  """Residual of the 1D cubic Nonlinear Schrödinger equation.
+
+  .. math:: i u_t + u_{xx} + |u|^2 u = 0
+  """
+  x0 = jnp.squeeze(x).astype(jnp.complex64)
+  t0 = jnp.squeeze(t).astype(jnp.complex64)
+
+  u_val = u(x, t)
+  u_xx = jax.hessian(lambda x_: u(jnp.array([x_]), t), holomorphic=True)(x0)
+  u_t = jax.grad(lambda tt: u(x, jnp.array([tt])), holomorphic=True)(t0)
+
+  res = 1j * u_t + u_xx + jnp.abs(u_val) ** 2 * u_val
+  return jnp.squeeze(res)
+
+
+def NLS_sol(
+  x: types.X,
+  t: types.T,
+  cfg: EqnConfig,
+) -> Float[types.NPArray, "*batch"]:
+  """Plane wave solution periodic on ``[-5,5]``."""
+  k = jnp.pi / 5.0
+  A = 1.0
+  w = k**2 - A**2
+  phase = k * jnp.squeeze(x) - w * jnp.squeeze(t)
+  return A * jnp.exp(1j * phase)
+
+
+def NLS_boundary_cond(
+  x: types.X,
+  t: types.T,
+  cfg: EqnConfig,
+) -> Float[types.NPArray, "*batch"]:
+  return jnp.zeros(x.shape[0], dtype=jnp.complex64)
+
+
+def NLS_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
+  """Sample ``x`` from ``[-5,5]`` and ``t`` from ``[0, \pi/2]``."""
+
+  @partial(jax.jit, static_argnames=["n_pts", "n_pts_boundary"])
+  def sample_domain(
+    n_pts: int, n_pts_boundary: int, rng: jax.Array
+  ) -> Tuple[types.X, types.T, types.X, types.T, jax.Array]:
+    keys = jax.random.split(rng, 5)
+    x = jax.random.uniform(keys[0], (n_pts, cfg.dim), minval=-5.0, maxval=5.0)
+    t = jax.random.uniform(keys[1], (n_pts, 1), minval=0.0, maxval=jnp.pi / 2)
+    x_b = jax.random.uniform(
+      keys[2], (n_pts_boundary, cfg.dim), minval=-5.0, maxval=5.0
+    )
+    t_b = jax.random.uniform(
+      keys[3], (n_pts_boundary, 1), minval=0.0, maxval=jnp.pi / 2
+    )
+    return x, t, x_b, t_b, keys[4]
+
+  return sample_domain
+
+
+NLS: Equation = Equation(
+  NLS_res,
+  NLS_boundary_cond,
+  identity_fn,
+  NLS_sol,
+  NLS_get_sample_domain_fn,
+)
+
+
 def Poisson_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
   """Sample space domain with uniform distribution on [0,1].
   The boundary has one random dimension perturbed to up to 2.
@@ -532,6 +606,59 @@ Poisson: Equation = Equation(
   Poisson_sol,
   Poisson_get_sample_domain_fn,
   time_dependent=False
+)
+
+
+def Burgers_res(
+  x: types.x_like,
+  t: types.t_like,
+  u: types.U,
+  cfg: EqnConfig,
+) -> Float[Array, "1"]:
+  """Residual for the 1D viscous Burgers' equation."""
+  xt = jnp.concatenate([x, t], axis=-1)
+
+  def u_xt(xt):
+    x_ = xt[: cfg.dim]
+    t_ = xt[cfg.dim :]
+    return jnp.squeeze(u(x_, t_))
+
+  _, u_val, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  u_x = u_d1[:-1]
+  u_t = u_d1[-1:]
+  u_xx = u_d2[:-1]
+
+  res = u_t + u_val * u_x - cfg.sigma * u_xx.sum()
+  return jnp.squeeze(res)
+
+
+def Burgers_sol(x: types.X, t: types.T, cfg: EqnConfig) -> Float[types.NPArray, "*batch"]:
+  return -jnp.tanh(x / (2 * cfg.sigma))
+
+
+def Burgers_boundary_cond(x: types.X, t: types.T, cfg: EqnConfig) -> Float[types.NPArray, "*batch"]:
+  return Burgers_sol(x, t, cfg)
+
+
+def Burgers_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
+  @partial(jax.jit, static_argnames=["n_pts", "n_pts_boundary"])
+  def sample_domain(n_pts: int, n_pts_boundary: int, rng: jax.Array):
+    keys = jax.random.split(rng, 4)
+    x = jax.random.normal(keys[0], (n_pts, cfg.dim))
+    t = jax.random.uniform(keys[1], (n_pts, 1)) * cfg.T
+    x_boundary = jax.random.normal(keys[2], (n_pts_boundary, cfg.dim))
+    t_boundary = jnp.zeros((n_pts_boundary, 1))
+    return x, t, x_boundary, t_boundary, keys[3]
+
+  return sample_domain
+
+
+Burgers: Equation = Equation(
+  Burgers_res,
+  Burgers_boundary_cond,
+  identity_fn,
+  Burgers_sol,
+  Burgers_get_sample_domain_fn,
 )
 
 
@@ -1136,6 +1263,22 @@ KdV: Equation = Equation(
   KdV_res, KdV_boundary_cond, KdV_enforce_boundary, KdV_sol,
   unit_ball_sample_domain_fn
 )
+
+
+def KdV_mass(x: types.X, t: types.T, u_fn: Callable[[types.X, types.T], jax.Array], cfg: EqnConfig) -> jax.Array:
+  """Approximate conserved mass for KdV by Monte Carlo sampling."""
+  u_val = jax.vmap(u_fn)(x, t)
+  return jnp.mean(u_val)
+
+
+def KdV_energy(x: types.X, t: types.T, u_fn: Callable[[types.X, types.T], jax.Array], cfg: EqnConfig) -> jax.Array:
+  """Approximate conserved energy for KdV by Monte Carlo sampling."""
+  grad_fn = jax.vmap(jax.grad(lambda xx, tt: u_fn(xx, tt), argnums=0))
+  u_val = jax.vmap(u_fn)(x, t)
+  u_x = grad_fn(x, t)
+  energy_density = 0.5 * jnp.sum(u_x**2, axis=-1) - (u_val**3) / 6.0
+  return jnp.mean(energy_density)
+
 
 
 def KdV2d_res(
