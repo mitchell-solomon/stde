@@ -20,7 +20,9 @@ class EqnConfig:
     # "BSB",
     "Wave",
     "Poisson",
+    "NLS",
     "Burgers",
+
     # "PoissonHouman",
     # "PoissonTwobody",
     # "PoissonTwobodyG",
