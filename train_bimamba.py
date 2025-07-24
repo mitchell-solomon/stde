@@ -33,7 +33,7 @@ import re
 
 
 from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
-from stde.config import EqnConfig
+from stde.config import EqnConfig, ModelConfig
 from stde import equations as eqns
 
 
@@ -138,6 +138,25 @@ parser.add_argument(
     default="rademacher",
     help="distribution for dense STDE",
 )
+parser.add_argument(
+    "--backbone",
+    type=str,
+    choices=["Mamba", "MLP"],
+    default="Mamba",
+    help="network backbone to use",
+)
+parser.add_argument(
+    "--no_stde",
+    action="store_true",
+    help="disable the STDE estimator",
+)
+parser.add_argument(
+    "--ad_mode",
+    type=str,
+    choices=["forward", "reverse"],
+    default="reverse",
+    help="AD mode when STDE is disabled",
+)
 eqn_choices = get_args(EqnConfig.__annotations__["name"])
 parser.add_argument(
     "--eqn_name",
@@ -181,6 +200,12 @@ parser.add_argument("--save_every", type=int, default=10000,
                     help="save parameters every n steps")
 
 args = parser.parse_args()
+
+if args.no_stde:
+    if args.ad_mode == "forward":
+        args.hess_diag_method = "forward"
+    else:
+        args.hess_diag_method = "stacked"
 
 # derive rand_batch_size from dimension (order of magnitude lower)
 rand_batch_size = max(1, args.spatial_dim // 10)
@@ -300,6 +325,7 @@ eqn_cfg = EqnConfig(
     hess_diag_method=args.hess_diag_method,
     stde_dist=args.stde_dist,
 )
+model_cfg = ModelConfig(net=args.backbone, width=args.hidden_features, depth=args.num_mamba_blocks)
 
 eqn = getattr(eqns, eqn_cfg.name)
 if eqn.random_coeff:
@@ -445,10 +471,12 @@ def main():
         custom_vjp_scan     = args.custom_vjp_scan,
         activation           = args.ssm_activation,
     )
-    # make a class for the PINN, which is a stack of Bi-MAMBA blocks
+    # make a class for the PINN, supporting either an MLP or Bi-MAMBA backbone
     class BiMambaPINN(nn.Module):
         eqn: eqns.Equation
         eqn_cfg: EqnConfig
+        model_cfg: ModelConfig
+        backbone: str = "Mamba"
         @nn.compact
         def __call__(self, x):
             # Ensure input shape is (B, L, D)
@@ -457,14 +485,22 @@ def main():
             L = x.shape[-2]
             x_in = x
 
-            # Apply the Mamba model
-            for i in range(args.num_mamba_blocks):
-                x = BidirectionalMamba(**vars(mamba_cfg), ssm_args=vars(ssm_cfg))(x)
-            
-            x_out = nn.Dense(args.dense_expansion*D, name="mlp", kernel_init=nn.initializers.lecun_normal())(x)
-            x_out = nn.gelu(x_out)
-            x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)  # (B, L, D) --> (B, L, 1)
-            x_out = x_out.squeeze(-1)
+            if self.backbone == "Mamba":
+                # Apply the Mamba model
+                for _ in range(self.model_cfg.depth):
+                    x = BidirectionalMamba(**vars(mamba_cfg), ssm_args=vars(ssm_cfg))(x)
+
+                x_out = nn.Dense(args.dense_expansion*D, name="mlp", kernel_init=nn.initializers.lecun_normal())(x)
+                x_out = nn.gelu(x_out)
+                x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)
+                x_out = x_out.squeeze(-1)
+            else:
+                h = x.reshape(B * L, D)
+                for _ in range(self.model_cfg.depth - 1):
+                    h = nn.Dense(self.model_cfg.width)(h)
+                    h = nn.tanh(h)
+                h = nn.Dense(1)(h)
+                x_out = h.reshape(B, L)
             # enforce PDE-specific boundary condition
             if self.eqn.time_dependent:
                 x_part, t_part = x_in[..., : args.spatial_dim], x_in[..., args.spatial_dim :]
@@ -554,7 +590,7 @@ def main():
             return l1, l2
 
     # And then proceed to instantiate your model as before:
-    mamba = BiMambaPINN(eqn=eqn, eqn_cfg=eqn_cfg)
+    mamba = BiMambaPINN(eqn=eqn, eqn_cfg=eqn_cfg, model_cfg=model_cfg, backbone=args.backbone)
 
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)

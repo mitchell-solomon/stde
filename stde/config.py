@@ -114,8 +114,9 @@ class ModelConfig:
   """size of hidden layers"""
   depth: int = 4
   """number of layers"""
-  net: Literal["MLP"] = "MLP"
-  """network architecture"""
+  net: Literal["MLP", "Mamba"] = "MLP"
+  """network backbone.``"MLP``" uses a standard multilayer perceptron while
+  ``"Mamba"`` instantiates the bidirectional Mamba architecture."""
   w_init: Literal["default", "kaiming_uniform",
                   "xavier_normal"] = "kaiming_uniform"
   """initializer for the network weights"""
