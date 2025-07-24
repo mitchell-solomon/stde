@@ -5,6 +5,7 @@ import json
 import io
 import logging
 import pickle
+import time
 from functools import partial
 from typing import Callable, Tuple, Optional, get_args
 
@@ -643,7 +644,10 @@ def main():
     losses = []
     best_loss = float("inf")
     iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
+    epoch_times = []
+    start_time = time.time()
     for step in iters:
+        step_start = time.time()
         state, train_loss, grads = train_step(state)
         train_loss_f = float(train_loss)
         losses.append(train_loss_f)
@@ -661,13 +665,15 @@ def main():
         )
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
-            l1_rel, l2_rel = eval_model(mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
+            l1_rel, l2_rel, linf_rel, res_mean, res_max, mass_err, energy_err = eval_model(
+                mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
             ))
             desc_str = (
                 f"iter={step} | "
                 f"l1_rel={l1_rel:.2e} | l2_rel={l2_rel:.2e} | "
+                f"linf_rel={linf_rel:.2e} | res_mean={res_mean:.2e} | "
                 f"loss={train_loss:.2e} | grad_norm={grad_norm:.2e}"
             )
             # save desc_str to log file
@@ -677,6 +683,8 @@ def main():
             peak_mem = mem_stats['peak_bytes_in_use'] / 1024**2
             gpu_mems.append(peak_mem)
 
+        epoch_times.append(time.time() - step_start)
+
     # read iter/s from log file
     try:
         with open(log_file, "r") as f:
@@ -684,6 +692,9 @@ def main():
         iter_per_s = float(lines[-3].strip().split(', ')[-1].split('it/s')[0])
     except Exception:
         iter_per_s = 0.0
+
+    total_time = time.time() - start_time
+    time_per_epoch = sum(epoch_times) / len(epoch_times)
 
     # --- Plot training loss curve ---
     plt.plot(losses)
@@ -701,7 +712,7 @@ def main():
             best_params = pickle.load(f)
         state = state.replace(params=best_params)
     print("\n=== Final evaluation on test set ===")
-    l1_rel, l2_rel = eval_model(
+    l1_rel, l2_rel, linf_rel, res_mean, res_max, mass_err, energy_err = eval_model(
         mamba,
         state.params,
         eqn,
@@ -724,7 +735,14 @@ def main():
             {
                 "l1_rel": l1_rel,
                 "l2_rel": l2_rel,
+                "linf_rel": linf_rel,
+                "residual_mean": res_mean,
+                "residual_max": res_max,
+                "mass_error": mass_err,
+                "energy_error": energy_err,
                 "iter_per_s": iter_per_s,
+                "time_per_epoch": time_per_epoch,
+                "total_time": total_time,
                 "peak_gpu_mem": max(gpu_mems),
                 "num_params": num_params,
                 "final_loss": float(losses[-1]) if losses else 0.0,
@@ -959,28 +977,61 @@ def main():
 
 
 def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
-    """Evaluate the model and return l1_rel and l2_rel."""
+    """Evaluate the model and return various error metrics."""
     if not eqn.is_traj:
-        l1_total, l2_total_sqr = 0.0, 0.0
+        l1_total, l2_total_sqr, linf_val = 0.0, 0.0, 0.0
+        res_sum, res_max = 0.0, 0.0
+        def u_fn(x, t):
+            xt = jnp.concatenate([x, t])
+            seq = jnp.broadcast_to(xt, (1, args.seq_len, xt.shape[0]))
+            out = mamba.apply({"params": params}, seq)
+            if out.ndim == 3:
+                out = out[0, -1]
+            return jnp.squeeze(out)
         for b in range(test_seqs.shape[0]):
             x_seq = test_seqs[b]
             y_true = test_truths[b]
             y_pred = mamba.apply({"params": params}, x_seq)
-            # drop trailing dim if present
             if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
                 y_pred = y_pred.squeeze(-1)
             err = y_pred - y_true
             l1_total += jnp.sum(jnp.abs(err))
             l2_total_sqr += jnp.sum(err**2)
+            linf_val = max(linf_val, float(jnp.max(jnp.abs(err))))
+
+            x = x_seq[..., :args.spatial_dim].reshape(-1, args.spatial_dim)
+            t = x_seq[..., -1:].reshape(-1, 1)
+            res = jax.vmap(lambda xv, tv: eqn.res(xv, tv, u_fn, eqn_cfg))(x, t)
+            res_sum += float(jnp.mean(jnp.abs(res)))
+            res_max = max(res_max, float(jnp.max(jnp.abs(res))))
         l1_rel = float(l1_total / y_true_l1)
         l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+        linf_rel = float(linf_val / float(jnp.max(jnp.abs(test_truths))))
+        res_mean = float(res_sum / test_seqs.shape[0])
+        res_max_val = float(res_max)
     else:
         xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
         y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
         y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
         l2_rel = l1_rel
-    return l1_rel, l2_rel
+        linf_rel = l1_rel
+        res_mean = res_max_val = 0.0
+
+    mass_err = energy_err = 0.0
+    if eqn_cfg.name == "KdV":
+        rng = jax.random.PRNGKey(0)
+        x_m, t_m, _, _, _ = sample_domain_fn(eqn_cfg.mc_batch_size, 0, rng)
+        t0 = jnp.zeros_like(t_m)
+        tT = jnp.ones_like(t_m) * eqn_cfg.T
+        mass0 = eqns.KdV_mass(x_m, t0, u_fn, eqn_cfg)
+        massT = eqns.KdV_mass(x_m, tT, u_fn, eqn_cfg)
+        energy0 = eqns.KdV_energy(x_m, t0, u_fn, eqn_cfg)
+        energyT = eqns.KdV_energy(x_m, tT, u_fn, eqn_cfg)
+        mass_err = float(jnp.abs(massT - mass0))
+        energy_err = float(jnp.abs(energyT - energy0))
+
+    return l1_rel, l2_rel, linf_rel, res_mean, res_max_val, mass_err, energy_err
 
 
 if __name__ == "__main__":

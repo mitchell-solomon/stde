@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 from functools import partial
 from typing import Tuple
 
@@ -111,9 +112,10 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
       y_t_true_l2 = np_.linalg.norm(y_t_true)
 
     y_true_l1, y_true_l2 = [np_.linalg.norm(y_true, ord=ord) for ord in [1, 2]]
+    y_true_linf = float(np_.max(np_.abs(y_true)))
 
   elif eqn.offline_sol != "":
-    pass
+    y_true_linf = 1.
 
   @jax.jit
   def update(state: TrainingState) -> Tuple:
@@ -165,6 +167,7 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
 
   losses = []
   l1_rels, l2_rels, w1_t_rels = [], [], []
+  linf_rels, res_means, res_maxs = [], [], []
   l1_rel = l2_rel = w1_t_rel = 0.
 
   logger = logging.getLogger()
@@ -175,8 +178,12 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
   iters = tqdm(range(cfg.gd_cfg.epochs), file=tqdm_out)
 
   gpu_mems = [0.]
+  epoch_times = []
+  start_time = time.time()
   calc_w1 = eqn.time_dependent and cfg.model_cfg.compute_w1_loss
   for step in iters:
+
+    step_start = time.time()
 
     loss, state, aux = update(state)
 
@@ -188,7 +195,9 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
     if (step + 1) % cfg.test_cfg.eval_every == 0 or (get_mem and step == 100):
 
       if not eqn.is_traj:
-        l1_total, l2_total_sqr, w1_t_total_sqr = 0., 0., 0.
+        l1_total, l2_total_sqr, linf_val = 0., 0., 0.
+        res_sum, res_max = 0., 0.
+        w1_t_total_sqr = 0.
         for i in range(n_test_batches):
           l1, l2_sqr, w1_t_sqr = err_norms_jit(
             state.params, state.rng_key, x_tests[i], t_tests[i], y_trues[i],
@@ -198,13 +207,26 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
           l2_total_sqr += l2_sqr
           w1_t_total_sqr += w1_t_sqr
 
+          y_pred = jax.vmap(lambda x_, t_: model.apply.u(state.params, state.rng_key, x_, t_))(x_tests[i], t_tests[i])
+          err = jnp.abs(y_trues[i] - y_pred)
+          linf_val = max(linf_val, float(jnp.max(err)))
+          res_batch = jax.vmap(lambda x_, t_: eqn.res(x_, t_, lambda x1, t1: model.apply.u(state.params, state.rng_key, x1, t1), cfg.eqn_cfg))(x_tests[i], t_tests[i])
+          res_sum += float(jnp.mean(jnp.abs(res_batch)))
+          res_max = max(res_max, float(jnp.max(jnp.abs(res_batch))))
+
         l1_rel = float(l1_total / y_true_l1)
         l2_rel = float(l2_total_sqr**0.5 / y_true_l2)
+        linf_rel = float(linf_val / y_true_linf)
+        res_mean = float(res_sum / n_test_batches)
+        res_max_val = float(res_max)
         w1_t_rel = float(w1_t_total_sqr**0.5 / y_t_true_l2)
 
         l1_rels.append(l1_rel)
         l2_rels.append(l2_rel)
         w1_t_rels.append(w1_t_rel)
+        linf_rels.append(linf_rel)
+        res_means.append(res_mean)
+        res_maxs.append(res_max_val)
 
         desc_str = f"{l1_rel=:.2E} | {l2_rel=:.2E} | {loss=:.2E} | "
         desc_str += " | ".join(
@@ -234,7 +256,9 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
 
       if use_wandb:
         wandb.log(
-          dict(l1_rel=l1_rel, l2_rel=l2_rel, w1_t_rel=w1_t_rel), step=step
+          dict(l1_rel=l1_rel, l2_rel=l2_rel, linf_rel=linf_rel,
+               res_mean=res_mean, res_max=res_max_val,
+               w1_t_rel=w1_t_rel), step=step
         )
 
       if get_mem:
@@ -247,6 +271,8 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
 
     if step % cfg.test_cfg.save_every == 0:
       cfg.save_params(state.params, step)
+
+    epoch_times.append(time.time() - step_start)
 
   with open(absl_log.get_log_file_name(), 'r') as f:
     lines = f.readlines()
@@ -268,4 +294,33 @@ def train(cfg: Config, use_wandb: bool, run_id: int = 1, get_mem: bool = False):
       logging.warn(e)
       iter_per_s = float(lines[-4].strip().split(', ')[-1].split('it/s')[0])
 
-  return losses, l1_rels, l2_rels, iter_per_s, max(gpu_mems)
+  total_time = time.time() - start_time
+  time_per_epoch = sum(epoch_times) / len(epoch_times)
+
+  mass_err = energy_err = 0.0
+  if cfg.eqn_cfg.name == "KdV":
+    sample_x, sample_t, _, _, rng = sample_domain_fn(cfg.eqn_cfg.mc_batch_size, 0, rng)
+    t0 = jnp.zeros_like(sample_t)
+    tT = jnp.ones_like(sample_t) * cfg.eqn_cfg.T
+    u_fn = lambda x, t: model.apply.u(state.params, state.rng_key, x, t)
+    mass0 = eqns.KdV_mass(sample_x, t0, u_fn, cfg.eqn_cfg)
+    massT = eqns.KdV_mass(sample_x, tT, u_fn, cfg.eqn_cfg)
+    energy0 = eqns.KdV_energy(sample_x, t0, u_fn, cfg.eqn_cfg)
+    energyT = eqns.KdV_energy(sample_x, tT, u_fn, cfg.eqn_cfg)
+    mass_err = float(jnp.abs(massT - mass0))
+    energy_err = float(jnp.abs(energyT - energy0))
+
+  return dict(
+      losses=losses,
+      l1_rels=l1_rels,
+      l2_rels=l2_rels,
+      linf_rels=linf_rels,
+      res_means=res_means,
+      res_maxs=res_maxs,
+      iter_per_s=iter_per_s,
+      time_per_epoch=time_per_epoch,
+      total_time=total_time,
+      peak_gpu_mem=max(gpu_mems),
+      mass_error=mass_err,
+      energy_error=energy_err,
+  )
