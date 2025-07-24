@@ -16,7 +16,7 @@ TEST_BATCH_SIZE=20
 
 
 SEQ_LEN=3
-SEED_FRAC=0.01
+SEED_FRAC=0.5
 
 # gather PDE names from the config dataclass
 PDE_NAMES=$(python - <<'PY'
