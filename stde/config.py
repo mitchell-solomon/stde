@@ -21,6 +21,8 @@ class EqnConfig:
     "Wave",
     "Poisson",
     "NLS",
+    "Burgers",
+
     # "PoissonHouman",
     # "PoissonTwobody",
     # "PoissonTwobodyG",

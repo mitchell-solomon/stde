@@ -86,6 +86,7 @@ information relevant to the implementation.
 | `HJB_LIN` | ✓ | ✗ | \(u_t + \Delta u - d^{-1}\|\nabla u\|^c = -2\) | \(u(x,T)=\sum_i x_i\) |
 | `HJB_LQG` | ✓ | ✗ | \(u_t + \Delta u - \mu\|\nabla u\|^2 = 0\) | \(u(x,T)=\log((1+\|x\|^2)/2)\) |
 | `BSB` | ✓ | ✗ | \(u_t + \tfrac{1}{2}\sigma^2 x^2\cdot\nabla^2 u - r(u- x\cdot\nabla u)=0\) | \(u(x,T)=\sum_i x_i^2\) |
+| `Burgers` | ✓ | ✗ | \(u_t + u\,u_x = \sigma\,u_{xx}\) | \(u(x,0)=-\tanh(x/(2\sigma))\) |
 | `Wave` | ✓ | ✗ | \(u_{tt}-\Delta u=0\) | \(u(x,0)=\sum_i\sinh x_i,\ u_t(x,0)=0\) |
 | `NLS` | ✓ | ✗ | \(i u_t + u_{xx} + |u|^2 u = 0\) | periodic on $[-5,5]$ |
 | `Poisson` | ✗ | ✗ | \(\Delta u = g(x)\) | \(u(x)=\sum_i e^{x_i}/d\) |

@@ -609,6 +609,59 @@ Poisson: Equation = Equation(
 )
 
 
+def Burgers_res(
+  x: types.x_like,
+  t: types.t_like,
+  u: types.U,
+  cfg: EqnConfig,
+) -> Float[Array, "1"]:
+  """Residual for the 1D viscous Burgers' equation."""
+  xt = jnp.concatenate([x, t], axis=-1)
+
+  def u_xt(xt):
+    x_ = xt[: cfg.dim]
+    t_ = xt[cfg.dim :]
+    return jnp.squeeze(u(x_, t_))
+
+  _, u_val, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  u_x = u_d1[:-1]
+  u_t = u_d1[-1:]
+  u_xx = u_d2[:-1]
+
+  res = u_t + u_val * u_x - cfg.sigma * u_xx.sum()
+  return jnp.squeeze(res)
+
+
+def Burgers_sol(x: types.X, t: types.T, cfg: EqnConfig) -> Float[types.NPArray, "*batch"]:
+  return -jnp.tanh(x / (2 * cfg.sigma))
+
+
+def Burgers_boundary_cond(x: types.X, t: types.T, cfg: EqnConfig) -> Float[types.NPArray, "*batch"]:
+  return Burgers_sol(x, t, cfg)
+
+
+def Burgers_get_sample_domain_fn(cfg: EqnConfig) -> Callable:
+  @partial(jax.jit, static_argnames=["n_pts", "n_pts_boundary"])
+  def sample_domain(n_pts: int, n_pts_boundary: int, rng: jax.Array):
+    keys = jax.random.split(rng, 4)
+    x = jax.random.normal(keys[0], (n_pts, cfg.dim))
+    t = jax.random.uniform(keys[1], (n_pts, 1)) * cfg.T
+    x_boundary = jax.random.normal(keys[2], (n_pts_boundary, cfg.dim))
+    t_boundary = jnp.zeros((n_pts_boundary, 1))
+    return x, t, x_boundary, t_boundary, keys[3]
+
+  return sample_domain
+
+
+Burgers: Equation = Equation(
+  Burgers_res,
+  Burgers_boundary_cond,
+  identity_fn,
+  Burgers_sol,
+  Burgers_get_sample_domain_fn,
+)
+
+
 def ZeroOnUnitBall_enforce_boundary(
   x: types.X,
   t: types.T,
