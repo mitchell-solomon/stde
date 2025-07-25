@@ -15,7 +15,7 @@ def test_nls_shapes_and_residual():
     assert u_val.shape[0] == 3
 
     u_fn = lambda x_, t_: equations.NLS.sol(x_[None], t_[None], cfg)
-    res = equations.NLS.res(x[0], t[0], u_fn, cfg)
+    res = equations.NLS.res(x[0], t[0], u_fn, cfg, jax.random.PRNGKey(0))
     assert jnp.allclose(res, 0.0, atol=1e-5)
 
 

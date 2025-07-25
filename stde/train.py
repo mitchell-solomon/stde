@@ -407,7 +407,7 @@ if eqn.time_dependent:
         xt[..., : args.spatial_dim], xt[..., args.spatial_dim :], eqn_cfg
     )
 
-    def residual_fn(xt, u_fn: Callable) -> Float[Array, "xt_dim"]:
+    def residual_fn(xt, u_fn: Callable, key: jax.Array) -> Float[Array, "xt_dim"]:
         x_part = xt[..., : args.spatial_dim]
         t_part = xt[..., args.spatial_dim :]
         res = eqn.res(
@@ -415,6 +415,7 @@ if eqn.time_dependent:
             t_part,
             lambda xi, ti: u_fn(jnp.concatenate([xi, ti], axis=-1)),
             eqn_cfg,
+            key,
         )
         if isinstance(res, tuple):
             res = res[0]
@@ -422,8 +423,8 @@ if eqn.time_dependent:
 else:
     sol_fn = lambda x: eqn.sol(x, None, eqn_cfg)
 
-    def residual_fn(x, u_fn: Callable) -> Float[Array, "xt_dim"]:
-        res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg)
+    def residual_fn(x, u_fn: Callable, key: jax.Array) -> Float[Array, "xt_dim"]:
+        res = eqn.res(x, None, lambda xi, _t: u_fn(xi), eqn_cfg, key)
         if isinstance(res, tuple):
             res = res[0]
         return res
@@ -552,7 +553,7 @@ def main():
                 def one_step_res(l, xt_l, key):
                     def u_fn(xt_i):
                         return y_at_l(xt_i, l, full_seq)
-                    res_val = residual_fn(xt_l, u_fn)
+                    res_val = residual_fn(xt_l, u_fn, key)
                     return res_val, key
                 keys = jax.random.split(key, L)
                 resids, _ = jax.vmap(one_step_res, in_axes=(0, 0, 0), out_axes=(0, 0))(
@@ -1037,7 +1038,8 @@ def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y
 
             x = x_seq[..., :args.spatial_dim].reshape(-1, args.spatial_dim)
             t = x_seq[..., -1:].reshape(-1, 1)
-            res = jax.vmap(lambda xv, tv: eqn.res(xv, tv, u_fn, eqn_cfg))(x, t)
+            keys = jax.random.split(jax.random.PRNGKey(0), x.shape[0])
+            res = jax.vmap(lambda xv, tv, k: eqn.res(xv, tv, u_fn, eqn_cfg, k))(x, t, keys)
             res_sum += float(jnp.mean(jnp.abs(res)))
             res_max = max(res_max, float(jnp.max(jnp.abs(res))))
         l1_rel = float(l1_total / y_true_l1)

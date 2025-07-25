@@ -16,5 +16,6 @@ def test_burgers_zero_residual():
     x = jnp.linspace(-1, 1, 5).reshape(-1, 1)
     t = jnp.linspace(0, cfg.T, 5).reshape(-1, 1)
 
-    res = jax.vmap(lambda x_, t_: eqn.res(x_, t_, u_fn, cfg))(x, t)
+    keys = jax.random.split(jax.random.PRNGKey(0), x.shape[0])
+    res = jax.vmap(lambda x_, t_, k: eqn.res(x_, t_, u_fn, cfg, k))(x, t, keys)
     assert jnp.allclose(res, 0.0, atol=1e-5)
