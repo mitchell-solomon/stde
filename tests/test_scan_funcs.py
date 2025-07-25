@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jax import custom_vjp, jit
 from jax.experimental.jet import jet
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 import matplotlib.pyplot as plt
 import seaborn as sns

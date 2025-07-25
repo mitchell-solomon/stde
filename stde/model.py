@@ -142,7 +142,7 @@ from jax import jit, numpy as jnp
 
 from jax.experimental.jet import jet
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 @struct.dataclass
 class DiagnosticsConfig:

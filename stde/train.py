@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 import numpy as np
 
@@ -276,7 +276,7 @@ sample_boundary_fn = sample_domain_fn
 
 # estimate typical domain extents to scale neighbourhood sampling
 span_rng = jax.random.PRNGKey(args.SEED + 1)
-x_tmp, t_tmp, _, _, _ = sample_domain_fn(1024, 0, span_rng)
+x_tmp, t_tmp, _, _, _ = sample_domain_fn(1024, 8, span_rng)
 x_span = float(jnp.max(x_tmp) - jnp.min(x_tmp))
 if eqn.time_dependent and t_tmp is not None:
     t_span = float(jnp.max(t_tmp) - jnp.min(t_tmp))
@@ -368,14 +368,14 @@ else:
             res = res[0]
         return res
 
-def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
+def eval_model(model, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
     """Evaluate the model and return various error metrics."""
     if not eqn.is_traj:
         l1_total, l2_total_sqr = 0.0, 0.0
         for b in range(test_seqs.shape[0]):
             x_seq = test_seqs[b]
             y_true = test_truths[b]
-            y_pred = mamba.apply({"params": params}, x_seq)
+            y_pred = model.apply({"params": params}, x_seq)
             if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
                 y_pred = y_pred.squeeze(-1)
             err = y_pred - y_true
@@ -387,7 +387,7 @@ def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y
 
     else:
         xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
-        y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
+        y_pred = model.apply({"params": params}, xt_zero)[0, 0]
         y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
         l2_rel = l1_rel
@@ -412,36 +412,9 @@ def main():
     master_rng = jax.random.PRNGKey(args.SEED)
     rng_train, rng_test = jax.random.split(master_rng)
 
-    # instantiate Bi-MAMBA
-    mamba_cfg = MambaConfig(
-        hidden_features       = args.hidden_features,
-        expansion_factor      = args.expansion_factor,
-        dt_rank               = args.dt_rank,
-        activation            = args.activation,
-        norm_type             = args.norm_type,
-        dense_expansion       = args.dense_expansion,
-        complement            = args.complement,
-        tie_in_proj           = args.tie_in_proj,
-        tie_gate              = args.tie_gate,
-        radius                = args.x_radius,
-        bidirectional         = args.bidirectional,
-        diagnostics           = DiagnosticsConfig(
-            skip     = args.diag_skip,
-            gate     = args.diag_gate,
-            gated    = args.diag_gated,
-            residual = args.diag_residual,
-        ),
-    )
-
-    ssm_cfg = SSMConfig(
-        recursive_scan      = args.recursive_scan,
-        min_recursion_length   = args.min_recursion_length,
-        recursive_split     = args.recursive_split,
-        custom_vjp_scan     = args.custom_vjp_scan,
-        activation           = args.ssm_activation,
-    )
+    
     # make a class for the PINN, supporting either an MLP or Bi-MAMBA backbone
-    class BiMambaPINN(nn.Module):
+    class PINN(nn.Module):
         eqn: eqns.Equation
         eqn_cfg: EqnConfig
         model_cfg: ModelConfig
@@ -455,6 +428,34 @@ def main():
             x_in = x
 
             if self.backbone == "Mamba":
+                # instantiate Mamba
+                mamba_cfg = MambaConfig(
+                    hidden_features       = args.hidden_features,
+                    expansion_factor      = args.expansion_factor,
+                    dt_rank               = args.dt_rank,
+                    activation            = args.activation,
+                    norm_type             = args.norm_type,
+                    dense_expansion       = args.dense_expansion,
+                    complement            = args.complement,
+                    tie_in_proj           = args.tie_in_proj,
+                    tie_gate              = args.tie_gate,
+                    radius                = args.x_radius,
+                    bidirectional         = args.bidirectional,
+                    diagnostics           = DiagnosticsConfig(
+                        skip     = args.diag_skip,
+                        gate     = args.diag_gate,
+                        gated    = args.diag_gated,
+                        residual = args.diag_residual,
+                    ),
+                )
+
+                ssm_cfg = SSMConfig(
+                    recursive_scan      = args.recursive_scan,
+                    min_recursion_length   = args.min_recursion_length,
+                    recursive_split     = args.recursive_split,
+                    custom_vjp_scan     = args.custom_vjp_scan,
+                    activation           = args.ssm_activation,
+                )
                 # Apply the Mamba model
                 for _ in range(self.model_cfg.depth):
                     x = BidirectionalMamba(**vars(mamba_cfg), ssm_args=vars(ssm_cfg))(x)
@@ -464,6 +465,7 @@ def main():
                 x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)
                 x_out = x_out.squeeze(-1)
             else:
+                # instantiate MLP
                 mlp_cfg = MlpConfig(
                     width=self.model_cfg.width,
                     depth=self.model_cfg.depth,
@@ -474,6 +476,7 @@ def main():
                     hidden_sizes=self.model_cfg.hidden_sizes,
                 )
                 x_out = MlpBackbone(mlp_cfg, time_dependent=self.eqn.time_dependent)(x)
+            
             # enforce PDE-specific boundary condition
             if self.eqn.time_dependent:
                 x_part, t_part = x_in[..., : args.spatial_dim], x_in[..., args.spatial_dim :]
@@ -562,9 +565,12 @@ def main():
             l2 = (err ** 2).sum()
             return l1, l2
 
+    
+    logger.info(f"Instantiating model with backbone {args.backbone}")   
     # And then proceed to instantiate your model as before:
-    mamba = BiMambaPINN(eqn=eqn, eqn_cfg=eqn_cfg, model_cfg=model_cfg, backbone=args.backbone)
+    model = PINN(eqn=eqn, eqn_cfg=eqn_cfg, model_cfg=model_cfg, backbone=args.backbone)
 
+    
     # initialize parameters on a dummy sequence
     rng_train, init_rng = jax.random.split(rng_train)
     x_dummy, rng = sample_domain_seq_fn(
@@ -573,15 +579,16 @@ def main():
         seq_len=args.seq_len,
         use_seed=args.use_seed_seq,
     )
-    flax_vars = mamba.init(init_rng, x_dummy)
+    flax_vars = model.init(init_rng, x_dummy)
+    logger.info("Model instantiated")
 
     # log input and output shapes
     logger.info(f"Input shape: {x_dummy.shape}")
-    logger.info(f"Output shape: {mamba.apply(flax_vars, x_dummy).shape}")
+    logger.info(f"Output shape: {model.apply(flax_vars, x_dummy).shape}")
     
 
     # Tabulate the model architecture for reference
-    table = mamba.tabulate_model()
+    table = model.tabulate_model()
 
     def strip_ansi(text):
         ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -631,7 +638,7 @@ def main():
     optimizer = getattr(optax, cfg.optimizer)(learning_rate=lr)
 
     state = MambaTrainState.create(
-        apply_fn=mamba.apply,
+        apply_fn=model.apply,
         params=flax_vars["params"],
         tx=optimizer,
         rng=rng_train,
@@ -647,7 +654,8 @@ def main():
         test_seqs = []
         test_truths = []
 
-        for _ in range(n_test_batches):
+        # add tqdm prgress bar to test set generation
+        for _ in tqdm(range(n_test_batches)):
             rng_test, sample_rng = jax.random.split(rng_test)
             x_test_seq, _ = sample_domain_seq_fn(
                 batch_size=args.test_batch_size,
@@ -680,8 +688,8 @@ def main():
 
     @jax.jit
     def train_step(state: MambaTrainState) -> MambaTrainState:
-        (loss, new_rng), grads = jax.value_and_grad(mamba.loss_fn, has_aux=True)(
-            state.params, state.rng, mamba.apply, sample_domain_seq_fn, sample_boundary_fn, rand_batch_size, args, eqn, eqn_cfg
+        (loss, new_rng), grads = jax.value_and_grad(model.loss_fn, has_aux=True)(
+            state.params, state.rng, model.apply, sample_domain_seq_fn, sample_boundary_fn, rand_batch_size, args, eqn, eqn_cfg
         )
         state = state.apply_gradients(grads=grads, rng=new_rng)
         return state, loss, grads
@@ -711,7 +719,7 @@ def main():
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
             l1_rel, l2_rel = eval_model(
-                mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
+                model, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
             ))
@@ -757,7 +765,7 @@ def main():
         state = state.replace(params=best_params)
     print("\n=== Final evaluation on test set ===")
     l1_rel, l2_rel = eval_model(
-        mamba,
+        model,
         state.params,
         eqn,
         eqn_cfg,
@@ -793,8 +801,6 @@ def main():
 
 
     # --- Plotting ---
-
-
     def _title_for_eqn(name: str, cfg: EqnConfig) -> str:
         params = []
         if name == "HJB_LQG":
@@ -917,7 +923,7 @@ def main():
 
         fig.suptitle(_title_for_eqn(eqn_name, eqn_cfg))
         plt.savefig(f"{save_dir}/{eqn_name}_solution.png", dpi=300)
-    def plot_all_solutions(test_seqs, test_truths, params, mamba, dim=None,
+    def plot_all_solutions(test_seqs, test_truths, params, model, dim=None,
                            xlabel='x', ylabel='u', cmap='viridis',
                            eqn_name: str = args.eqn_name):
         """
@@ -926,8 +932,8 @@ def main():
         Args:
         test_seqs:   array (n_batches, B, L, D)
         test_truths: array (n_batches, B, L)
-        params:      your trained params to pass into mamba.apply
-        mamba:       your BidirectionalMamba instance
+        params:      your trained params to pass into model.apply
+        model:       your model instance
         dim:         spatial dimension (if None, inferred from D)
         """
         # flatten batches
@@ -938,7 +944,7 @@ def main():
         # reshape to (n_batches*B, L, D) for a big batch
         seqs_flat = test_seqs.reshape((n_batches * B, L, D))
         # run model in one go
-        u_pred_seq = mamba.apply({"params": params},
+        u_pred_seq = model.apply({"params": params},
                                 seqs_flat)      # → (n_batches*B, L, 1) or (nB, L)
         
         # flatten spatial points and truths
@@ -963,7 +969,7 @@ def main():
         plot_all_solutions(test_seqs,
                            test_truths,
                            state.params,
-                           mamba,
+                           model,
                            dim=args.spatial_dim)
     def visualize_sequences(x_seq, x_ordering="none"):
         """

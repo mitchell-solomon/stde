@@ -38,7 +38,9 @@ def main() -> None:
     parser.add_argument(
         "--benchmarks",
         nargs="+",
-        default=["Poisson", "Wave"], # ["Burgers", "Poisson", "Wave", "KdV2d"]
+        default=["Poisson", "Wave", "Burgers", "KdV2d",  
+                  "PoissonHouman",  
+                 "SineGordonTime", "AllenCahnTime", "SemilinearHeatTime"],  # , "SineGordonTwobody", "AllenCahnTwobody", "PoissonTwobody",
         help="equation names to run",
     )
     parser.add_argument("--seeds", type=int, default=5, help="number of seeds")
@@ -46,7 +48,7 @@ def main() -> None:
     parser.add_argument("--eval_every", type=int, default=50000000)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_test", type=int, default=20000)
-    parser.add_argument("--test_batch_size", type=int, default=20)
+    parser.add_argument("--test_batch_size", type=int, default=5)
     parser.add_argument("--seq_len", type=int, default=5)
     parser.add_argument("--use_seed_seq", type=bool, default=True)
     parser.add_argument("--seed_frac", type=float, default=0.01)
