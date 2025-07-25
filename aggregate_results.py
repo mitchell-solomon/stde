@@ -44,10 +44,24 @@ def aggregate_results(results_dir: str = "_results") -> pd.DataFrame:
     return df
 
 
-def plot_scatter(df, xcol, ycol, out_file="aggregate_plot.png"):
-    """Create an annotated scatter plot of l2_rel vs l1_rel, colored by eqn_name."""
+# seaborn box a whisker plots, grouped by equations then variant
+def plot_boxplot(df, metric_col, out_file="aggregate_bw_plot.png"):
+    """Create a box plot of ``metric_col`` grouped by eqn_name and variant."""
     plt.figure(figsize=(8, 6))
-    sns.scatterplot(data=df, x=xcol, y=ycol, hue="eqn_name")
+    sns.boxplot(data=df, x="eqn_name", y=metric_col, hue="variant")
+    plt.yscale('log')
+    plt.xlabel("Equation")
+    plt.ylabel(metric_col)
+    plt.title("Evaluation Results")
+    plt.tight_layout()
+    plt.savefig(out_file)
+    print(f"Plot saved to {out_file}")
+
+
+def plot_scatter(df, xcol, ycol, out_file="aggregate_plot.png"):
+    """Create an annotated scatter plot of metric1 vs metric2, colored by variant."""
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x=xcol, y=ycol, hue="variant")
     plt.xscale('log')
     plt.yscale('log')
 
@@ -125,7 +139,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--metrics",
         nargs="+",
-        default=["l1_rel", "total_time"],
+        default=["l2_rel", "total_time", "peak_gpu_mem", "num_params"],
         help="metrics to summarize and compare",
     )
     parser.add_argument("--plot", action="store_true", help="create scatter plots")
@@ -135,7 +149,7 @@ if __name__ == "__main__":
     if df.empty:
         print("No runs found")
         exit()
-
+    print(df.columns)
     summary = summarize_variants(df, args.metrics)
     print("\n## Summary")
     print(markdown_table(summary))
@@ -148,4 +162,6 @@ if __name__ == "__main__":
     if args.plot:
         xcol, ycol = args.metrics[0], args.metrics[1] if len(args.metrics) > 1 else args.metrics[0]
         plot_scatter(df, xcol, ycol, out_file=Path(args.results_dir) / "aggregate.png")
+        for metric in args.metrics: 
+            plot_boxplot(df, metric, out_file=Path(args.results_dir) / f"aggregate_bw_{metric}.png")
         
