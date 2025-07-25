@@ -77,7 +77,10 @@ methods include:
 
 Additional CLI flags for ablations include:
 
-- `--backbone {MLP,Mamba}` to choose the network type.
+- `--backbone {MLP,Mamba}` to choose the network type. Selecting `MLP`
+  instantiates the `MlpBackbone` defined in `stde/mlp.py`, a simple
+  feed‑forward network that also supports optional weight sharing via the
+  `block_size` parameter.
 - `--hess_diag_method` to select the Hessian diagonal estimator.
 - `--no_stde` to disable STDE entirely.
 - `--ad_mode {forward,reverse}` to pick the AD mode when STDE is disabled.
