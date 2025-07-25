@@ -73,7 +73,7 @@ class EqnConfig:
   """Monte Carlo batch size for evaluating integrals (e.g. the exact solution
   to HJB-LQG)"""
   hess_diag_method: Literal["stacked", "forward", "sparse_stde", "dense_stde",
-                            "scan", "folx"] = "sparse_stde"
+                            "scan"] = "sparse_stde"
   """Method for computing the hessian diagonal"""
   rand_jac: bool = False
   """whether to randomized the Jacobian computation"""
@@ -136,7 +136,7 @@ class GDConfig:
   """learning rate schedule"""
   gamma: float = 0.9995
   """decay rate for exponential schedule"""
-  optimizer: Literal["adam", "sgd", "rmsprop"] = "adam"
+  optimizer: Literal["adam", "adamw", "sgd", "rmsprop"] = "adam"
   """which optimizer to use"""
   epochs: int = 10000
   """number of updates/iterations"""

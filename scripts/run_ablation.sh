@@ -19,13 +19,8 @@ SEQ_LEN=5
 SEED_FRAC=0.05
 
 # gather PDE names from the config dataclass
-PDE_NAMES=$(python - <<'PY'
-from typing import get_args
-from stde.config import EqnConfig
-print(' '.join(get_args(EqnConfig.__annotations__['name'])))
-PY
-)
-
+PDE_NAMES="Wave Poisson NLS Burgers"
+# PDE_NAMES="Wave"
 mkdir -p logs
 
 for PDE in $PDE_NAMES; do
@@ -69,6 +64,7 @@ PY
                 --tie_in_proj \
                 --tie_gate \
                 --bidirectional \
+                --use_seed_seq \
                 --seed_frac "$SEED_FRAC" \
                 >> "$LOG_FILE" 2>&1; then
                 echo "Completed $PDE with $METHOD and dim $DIM" >> "$LOG_FILE"

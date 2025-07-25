@@ -29,7 +29,7 @@ import pprint
 import re
 
 from stde.model import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
-from stde.config import EqnConfig, ModelConfig
+from stde.config import EqnConfig, ModelConfig, GDConfig
 from stde import equations as eqns
 
 def count_params(params):
@@ -84,6 +84,10 @@ parser.add_argument(
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--eval_every", type=int, default=5000)
 parser.add_argument("--lr", type=float, default=1e-3)
+parser.add_argument("--lr_decay", type=str, default="linear", choices=["none", "piecewise", "cosine", "linear", "exponential"])
+parser.add_argument("--gamma", type=float, default=0.9995)
+parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "adamw", "sgd", "rmsprop"])
+parser.add_argument("--n_fgd_vec", type=int, default=0)
 parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
@@ -119,8 +123,7 @@ parser.add_argument(
         "forward",
         "sparse_stde",
         "dense_stde",
-        "scan",
-        "folx",
+        "scan"
     ],
     default="sparse_stde",
     help="method for computing the Hessian diagonal",
@@ -366,15 +369,7 @@ else:
 def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
     """Evaluate the model and return various error metrics."""
     if not eqn.is_traj:
-        l1_total, l2_total_sqr, linf_val = 0.0, 0.0, 0.0
-        res_sum, res_max = 0.0, 0.0
-        def u_fn(x, t):
-            xt = jnp.concatenate([x, t])
-            seq = jnp.broadcast_to(xt, (1, args.seq_len, xt.shape[0]))
-            out = mamba.apply({"params": params}, seq)
-            if out.ndim == 3:
-                out = out[0, -1]
-            return jnp.squeeze(out)
+        l1_total, l2_total_sqr = 0.0, 0.0
         for b in range(test_seqs.shape[0]):
             x_seq = test_seqs[b]
             y_true = test_truths[b]
@@ -384,42 +379,19 @@ def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y
             err = y_pred - y_true
             l1_total += jnp.sum(jnp.abs(err))
             l2_total_sqr += jnp.sum(err**2)
-            linf_val = max(linf_val, float(jnp.max(jnp.abs(err))))
 
-            x = x_seq[..., :args.spatial_dim].reshape(-1, args.spatial_dim)
-            t = x_seq[..., -1:].reshape(-1, 1)
-            keys = jax.random.split(jax.random.PRNGKey(0), x.shape[0])
-            res = jax.vmap(lambda xv, tv, k: eqn.res(xv, tv, u_fn, eqn_cfg, k))(x, t, keys)
-            res_sum += float(jnp.mean(jnp.abs(res)))
-            res_max = max(res_max, float(jnp.max(jnp.abs(res))))
         l1_rel = float(l1_total / y_true_l1)
         l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
-        linf_rel = float(linf_val / float(jnp.max(jnp.abs(test_truths))))
-        res_mean = float(res_sum / test_seqs.shape[0])
-        res_max_val = float(res_max)
+
     else:
         xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
         y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
         y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
         l2_rel = l1_rel
-        linf_rel = l1_rel
-        res_mean = res_max_val = 0.0
 
-    mass_err = energy_err = 0.0
-    if eqn_cfg.name == "KdV":
-        rng = jax.random.PRNGKey(0)
-        x_m, t_m, _, _, _ = sample_domain_fn(eqn_cfg.mc_batch_size, 0, rng)
-        t0 = jnp.zeros_like(t_m)
-        tT = jnp.ones_like(t_m) * eqn_cfg.T
-        mass0 = eqns.KdV_mass(x_m, t0, u_fn, eqn_cfg)
-        massT = eqns.KdV_mass(x_m, tT, u_fn, eqn_cfg)
-        energy0 = eqns.KdV_energy(x_m, t0, u_fn, eqn_cfg)
-        energyT = eqns.KdV_energy(x_m, tT, u_fn, eqn_cfg)
-        mass_err = float(jnp.abs(massT - mass0))
-        energy_err = float(jnp.abs(energyT - energy0))
 
-    return l1_rel, l2_rel, linf_rel, res_mean, res_max_val, mass_err, energy_err
+    return l1_rel, l2_rel
 
 
 
@@ -611,11 +583,47 @@ def main():
 
     table = strip_ansi(table)
     logger.info(f"Model architecture:{table}")
-    
+
+    cfg = GDConfig(
+        lr=args.lr,
+        lr_decay=args.lr_decay,
+        gamma=args.gamma,
+        optimizer=args.optimizer,
+        epochs=args.epochs,
+        n_fgd_vec=args.n_fgd_vec,
+    )
+
     # init exponential decay learning rate schedule
-    lr = args.lr
-    # create optimizer + train state
-    optimizer = optax.adam(learning_rate=lr)
+    if cfg.lr_decay == "piecewise":
+        lr = optax.piecewise_constant_schedule(
+        init_value=cfg.lr,
+        boundaries_and_scales={
+            int(cfg.epochs * 0.5): 0.5,
+            int(cfg.epochs * 0.75): 0.25,
+            int(cfg.epochs * 0.825): 0.125,
+        }
+        )
+    elif cfg.lr_decay == "linear":
+        lr = optax.linear_schedule(
+        init_value=cfg.lr, end_value=0., transition_steps=cfg.epochs
+        )
+    elif cfg.lr_decay == "exponential":
+        lr = optax.exponential_decay(
+        init_value=cfg.lr, transition_steps=cfg.epochs, decay_rate=cfg.gamma
+        )
+    elif cfg.lr_decay == "cosine":
+        lr = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=1.0,
+        warmup_steps=50,
+        decay_steps=cfg.epochs - 50,
+        end_value=0.0,
+        )
+    else:
+        lr = cfg.lr
+    
+    optimizer = getattr(optax, cfg.optimizer)(learning_rate=lr)
+
     state = MambaTrainState.create(
         apply_fn=mamba.apply,
         params=flax_vars["params"],
@@ -696,7 +704,7 @@ def main():
         )
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
-            l1_rel, l2_rel, linf_rel, res_mean, res_max, mass_err, energy_err = eval_model(
+            l1_rel, l2_rel = eval_model(
                 mamba, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
@@ -704,7 +712,6 @@ def main():
             desc_str = (
                 f"iter={step} | "
                 f"l1_rel={l1_rel:.2e} | l2_rel={l2_rel:.2e} | "
-                f"linf_rel={linf_rel:.2e} | res_mean={res_mean:.2e} | "
                 f"loss={train_loss:.2e} | grad_norm={grad_norm:.2e}"
             )
             # save desc_str to log file
@@ -743,7 +750,7 @@ def main():
             best_params = pickle.load(f)
         state = state.replace(params=best_params)
     print("\n=== Final evaluation on test set ===")
-    l1_rel, l2_rel, linf_rel, res_mean, res_max, mass_err, energy_err = eval_model(
+    l1_rel, l2_rel = eval_model(
         mamba,
         state.params,
         eqn,
@@ -766,11 +773,6 @@ def main():
             {
                 "l1_rel": l1_rel,
                 "l2_rel": l2_rel,
-                "linf_rel": linf_rel,
-                "residual_mean": res_mean,
-                "residual_max": res_max,
-                "mass_error": mass_err,
-                "energy_error": energy_err,
                 "iter_per_s": iter_per_s,
                 "time_per_epoch": time_per_epoch,
                 "total_time": total_time,

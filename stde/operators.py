@@ -1,7 +1,6 @@
 from typing import Callable, Sequence, Tuple
 import jax
 import jax.numpy as jnp
-# from folx import forward_laplacian
 from jax import lax
 from jax.experimental import jet
 from jaxtyping import Array, Float, Integer
@@ -170,26 +169,6 @@ def hess_diag(
     key_idx, key_vec = jax.random.split(key)
     # indices of x_i along which the hessian diagonal is computed
     idx_set = get_sdgd_idx_set(cfg, key=key_idx)
-
-    if cfg.hess_diag_method == "folx":
-      # the folx package provides a forward-mode Laplacian operator
-      # that yields function value, gradient and trace of the Hessian
-      assert not with_time
-
-      fwd_f = forward_laplacian(f_partial)
-      result = fwd_f(x_i)
-      f_val = result.x
-      f_x = result.jacobian.data
-
-      # HACK: folx only returns the Hessian trace.  The API of this
-      # function expects the full diagonal, so broadcast the trace
-      # value across all dimensions.
-      f_lapl = result.laplacian
-
-      d = cfg.rand_batch_size or cfg.dim
-      f_xx = f_lapl * jnp.ones(d) / d
-
-      return idx_set, f_val, f_x, f_xx
 
     if cfg.hess_diag_method == "dense_stde":
       # compute Hessian-vector products using the jet API over
