@@ -1,5 +1,4 @@
 *.pyc
 /stde.egg-info/
-/_results/
 /pde_solution_plots/
 my_learning

@@ -1,0 +1,11 @@
+{
+  "l1_rel": NaN,
+  "l2_rel": NaN,
+  "iter_per_s": 0.0,
+  "time_per_epoch": 0.025262984204292297,
+  "total_time": 252.6816704273224,
+  "peak_gpu_mem": 81.895751953125,
+  "num_params": 1000,
+  "final_loss": NaN,
+  "best_loss": 39.09518051147461
+}

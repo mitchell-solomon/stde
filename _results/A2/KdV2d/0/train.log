@@ -1,0 +1,116 @@
+Unable to initialize backend 'tpu': INTERNAL: Failed to open libtpu.so: libtpu.so: cannot open shared object file: No such file or directory
+Args:
+{ 'N_test': 20000,
+  'SEED': 0,
+  'activation': 'tanh',
+  'ad_mode': 'reverse',
+  'backbone': 'Mamba',
+  'bidirectional': False,
+  'complement': False,
+  'custom_vjp_scan': False,
+  'dense_expansion': 2,
+  'diag_gate': False,
+  'diag_gated': False,
+  'diag_residual': False,
+  'diag_skip': False,
+  'dt_rank': 'auto',
+  'epochs': 10000,
+  'eqn_name': 'KdV2d',
+  'eval_every': 50000000,
+  'expansion_factor': 2.0,
+  'gamma': 0.9995,
+  'hess_diag_method': 'stacked',
+  'hidden_features': 64,
+  'lr': 0.0001,
+  'lr_decay': 'linear',
+  'min_recursion_length': 100,
+  'n_fgd_vec': 0,
+  'no_stde': True,
+  'norm_type': 'none',
+  'num_mamba_blocks': 1,
+  'optimizer': 'adam',
+  'rand_batch_size': 1,
+  'recursive_scan': False,
+  'recursive_split': False,
+  'run_name': 'A2/KdV2d/0',
+  'sampling_mode': 'random',
+  'save_every': 10000,
+  'seed_frac': 0.01,
+  'seq_len': 5,
+  'spatial_dim': 1,
+  'ssm_activation': 'silu',
+  'stde_dist': 'rademacher',
+  'test_batch_size': 5,
+  'tie_gate': False,
+  'tie_in_proj': False,
+  'use_seed_seq': True,
+  'x_ordering': 'radial',
+  'x_radius': 1.0}
+
+Instantiating model with backbone Mamba
+Model instantiated
+Input shape: (2, 5, 2)
+Output shape: (2, 5)
+Model architecture:
+                                                             PINN Summary                                                             
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ path                                           ┃ module             ┃ inputs           ┃ outputs          ┃ params                 ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
+│                                                │ PINN               │ float32[4,5,2]   │ float32[4,5]     │                        │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0                           │ BidirectionalMamba │ float32[4,5,2]   │ float32[4,5,2]   │                        │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/in_proj                   │ Dense              │ float32[4,5,2]   │ float32[4,5,16]  │ bias: float32[16]      │
+│                                                │                    │                  │                  │ kernel: float32[2,16]  │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 48 (192 B)             │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/SelectiveSSM_0            │ SelectiveSSM       │ - float32[4,5,4] │ float32[4,5,4]   │ A_log: float32[4,64]   │
+│                                                │                    │ - False          │                  │ D: float32[4]          │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 260 (1.0 KB)           │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/SelectiveSSM_0/shift_conv │ Conv               │ float32[4,5,4]   │ float32[4,5,4]   │ kernel: float32[3,1,4] │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 12 (48 B)              │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/SelectiveSSM_0/BC         │ Dense              │ float32[4,5,4]   │ float32[4,5,128] │ bias: float32[128]     │
+│                                                │                    │                  │                  │ kernel: float32[4,128] │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 640 (2.6 KB)           │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/SelectiveSSM_0/dt         │ Dense              │ float32[4,5,4]   │ float32[4,5,1]   │ bias: float32[1]       │
+│                                                │                    │                  │                  │ kernel: float32[4,1]   │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 5 (20 B)               │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/SelectiveSSM_0/dt_proj    │ Dense              │ float32[4,5,1]   │ float32[4,5,4]   │ bias: float32[4]       │
+│                                                │                    │                  │                  │ kernel: float32[1,4]   │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 8 (32 B)               │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ BidirectionalMamba_0/out_proj                  │ Dense              │ float32[4,5,4]   │ float32[4,5,2]   │ bias: float32[2]       │
+│                                                │                    │                  │                  │ kernel: float32[4,2]   │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 10 (40 B)              │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ mlp                                            │ Dense              │ float32[4,5,2]   │ float32[4,5,4]   │ bias: float32[4]       │
+│                                                │                    │                  │                  │ kernel: float32[2,4]   │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 12 (48 B)              │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│ mlp_proj                                       │ Dense              │ float32[4,5,4]   │ float32[4,5,1]   │ bias: float32[1]       │
+│                                                │                    │                  │                  │ kernel: float32[4,1]   │
+│                                                │                    │                  │                  │                        │
+│                                                │                    │                  │                  │ 5 (20 B)               │
+├────────────────────────────────────────────────┼────────────────────┼──────────────────┼──────────────────┼────────────────────────┤
+│                                                │                    │                  │            Total │ 1,000 (4.0 KB)         │
+└────────────────────────────────────────────────┴────────────────────┴──────────────────┴──────────────────┴────────────────────────┘
+                                                                                                                                      
+                                                   Total Parameters: 1,000 (4.0 KB)                                                   
+
+
+num params: 1000
+iter=0 | l1_rel=9.62e-01 | l2_rel=9.78e-01 | loss=2.47e+02 | grad_norm=4.05e+03
+iter=9999 | l1_rel=1.08e+00 | l2_rel=1.07e+00 | loss=2.68e+00 | grad_norm=7.93e+01
+Final → l1_rel=1.073e+00 | l2_rel=1.060e+00
