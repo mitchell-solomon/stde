@@ -63,5 +63,6 @@ if __name__ == "__main__":
     print(df)
     print(df.columns)
     if not df.empty:
-        plot_scatter(df, "l1_rel", "final_loss", out_file="l1_floss.png")
+        plot_scatter(df, "l1_rel", "best_loss", out_file="_results/l1_bloss.png")
+        plot_scatter(df, "l2_rel", "best_loss", out_file="_results/l2_bloss.png")
         

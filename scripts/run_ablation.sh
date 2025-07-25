@@ -16,7 +16,7 @@ TEST_BATCH_SIZE=20
 
 
 SEQ_LEN=5
-SEED_FRAC=0.05
+SEED_FRAC=0.01
 
 # gather PDE names from the config dataclass
 PDE_NAMES="Wave Poisson NLS Burgers"
