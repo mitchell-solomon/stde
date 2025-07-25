@@ -15,8 +15,8 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
-
 config.update("jax_enable_x64", True)
+
 import numpy as np
 
 from flax.training import train_state
