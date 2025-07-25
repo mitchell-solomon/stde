@@ -94,7 +94,8 @@ parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
 parser.add_argument(
     "--use_seed_seq",
-    action="store_true",
+    type=bool,
+    default=True,
     help="Sample each sequence around random seed points rather than independently",
 )
 parser.add_argument(
@@ -294,7 +295,7 @@ def sample_domain_seq_fn(
     batch_size: int,
     rng: jax.Array,
     seq_len: int,
-    use_seed: bool = False,
+    use_seed: bool,
 ) -> Tuple[jnp.ndarray, jax.Array]:
     """Sample ``batch_size``\*``seq_len`` points and reshape to sequences.
 
