@@ -56,6 +56,11 @@ def main() -> None:
         default=Path("_results"),
         help="base directory to store results",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="rerun even if final results already exist",
+    )
 
     args, unknown = parser.parse_known_args()
 
@@ -81,6 +86,12 @@ def main() -> None:
     for variant, var_args in VARIANTS.items():
         for seed in range(args.seeds):
             for eqn_name in args.benchmarks:
+                run_dir = args.results_dir / variant / eqn_name / str(seed)
+                final_path = run_dir / "final_eval_results.json"
+                if final_path.exists() and not args.overwrite:
+                    print(f"Skipping {run_dir} (already exists)")
+                    continue
+
                 run_name = f"{variant}/{eqn_name}/{seed}"
                 dim = default_dim(eqn_name)
                 cmd = [
