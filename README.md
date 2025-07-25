@@ -87,6 +87,13 @@ Additional CLI flags for ablations include:
 
 Results and model checkpoints are stored under `_results/`.
 
+## Running ablation variants
+The helper script `run_ablation_variants.py` sweeps the predefined variants
+across selected equations and seeds. Each run is saved under
+`_results/VARIANT/EQN/SEED`. If a run already produced a
+`final_eval_results.json` file, it is skipped automatically to avoid
+duplicating work. Pass `--overwrite` to rerun even when such a file exists.
+
 ## Available PDEs
 The table below summarises the equations defined in `EqnConfig` together with
 information relevant to the implementation.
