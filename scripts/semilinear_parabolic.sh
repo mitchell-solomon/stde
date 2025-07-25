@@ -1,4 +1,4 @@
-python main.py \
+python -m stde.train \
     --config.eqn_cfg.unbiased=False \
     --config.eqn_cfg.discretize_time=False \
     --config.eqn_cfg.batch_size 2000 \

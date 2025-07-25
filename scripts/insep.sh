@@ -1,4 +1,4 @@
-python main.py \
+python -m stde.train \
     --config.eqn_cfg.batch_size 100 \
     --config.eqn_cfg.batch_size_boundary 100 \
     --config.eqn_cfg.enforce_boundary=True \
