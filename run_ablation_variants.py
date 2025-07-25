@@ -38,17 +38,17 @@ def main() -> None:
     parser.add_argument(
         "--benchmarks",
         nargs="+",
-        default=["Burgers", "Poisson", "NLS", "KdV"],
+        default=["Burgers", "Poisson", "Wave", "KdV2d"],
         help="equation names to run",
     )
-    parser.add_argument("--seeds", type=int, default=1, help="number of seeds")
-    parser.add_argument("--epochs", type=int, default=100, help="training epochs")
-    parser.add_argument("--eval_every", type=int, default=50)
+    parser.add_argument("--seeds", type=int, default=5, help="number of seeds")
+    parser.add_argument("--epochs", type=int, default=10000, help="training epochs")
+    parser.add_argument("--eval_every", type=int, default=50000000)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_test", type=int, default=200)
     parser.add_argument("--test_batch_size", type=int, default=20)
     parser.add_argument("--seq_len", type=int, default=5)
-    parser.add_argument("--seed_frac", type=float, default=0.05)
+    parser.add_argument("--seed_frac", type=float, default=0.01)
     parser.add_argument(
         "--results_dir",
         type=Path,
@@ -77,8 +77,8 @@ def main() -> None:
 
     for variant, var_args in VARIANTS.items():
         for seed in range(args.seeds):
-            run_name = f"{variant}/{seed}"
             for eqn_name in args.benchmarks:
+                run_name = f"{variant}/{eqn_name}/{seed}"
                 dim = default_dim(eqn_name)
                 cmd = [
                     "python",

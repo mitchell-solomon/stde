@@ -997,10 +997,8 @@ def main():
         plt.gca().set_aspect("equal", "box")
         plt.xlabel("x₀")
         plt.ylabel("x₁")
-        plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.tight_layout()
         plt.savefig(f"{save_dir}/sequences_{x_ordering}.png", dpi=300)
-        # plt.show()
     if not eqn.is_traj:
         seq_vis = test_seqs[0]
         if seq_vis.shape[-1] > 2:
