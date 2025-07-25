@@ -2,7 +2,6 @@
 import argparse
 import os
 import json
-import io
 import logging
 import pickle
 import time
@@ -22,21 +21,16 @@ import numpy as np
 from flax.training import train_state
 import flax.linen as nn
 
-
 import optax
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
-# from pprint import pprint
 import pprint
 import re
-
 
 from stde.model import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
 from stde.config import EqnConfig, ModelConfig
 from stde import equations as eqns
-
-
 
 def count_params(params):
     flat = jax.tree_util.tree_leaves(params)
@@ -211,6 +205,7 @@ if args.no_stde:
 rand_batch_size = max(1, args.spatial_dim // 10)
 args.rand_batch_size = rand_batch_size
 
+
 # ---------------------------------------------------------------------------
 # logging setup
 # ---------------------------------------------------------------------------
@@ -218,9 +213,6 @@ args.rand_batch_size = rand_batch_size
 save_dir = f"_results/{args.run_name}"
 os.makedirs(save_dir, exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# logging setup
-# ---------------------------------------------------------------------------
 log_file = os.path.join(save_dir, "train.log")
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -254,7 +246,6 @@ logger.info(f"Args:\n{args_str}\n")
 # -----------------------------------------------------------------------------
 # Hessian‐trace estimator
 # -----------------------------------------------------------------------------
-
 
 coeffs_ = np.random.randn(1, args.spatial_dim)
 
@@ -371,6 +362,66 @@ else:
         if isinstance(res, tuple):
             res = res[0]
         return res
+
+def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
+    """Evaluate the model and return various error metrics."""
+    if not eqn.is_traj:
+        l1_total, l2_total_sqr, linf_val = 0.0, 0.0, 0.0
+        res_sum, res_max = 0.0, 0.0
+        def u_fn(x, t):
+            xt = jnp.concatenate([x, t])
+            seq = jnp.broadcast_to(xt, (1, args.seq_len, xt.shape[0]))
+            out = mamba.apply({"params": params}, seq)
+            if out.ndim == 3:
+                out = out[0, -1]
+            return jnp.squeeze(out)
+        for b in range(test_seqs.shape[0]):
+            x_seq = test_seqs[b]
+            y_true = test_truths[b]
+            y_pred = mamba.apply({"params": params}, x_seq)
+            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
+                y_pred = y_pred.squeeze(-1)
+            err = y_pred - y_true
+            l1_total += jnp.sum(jnp.abs(err))
+            l2_total_sqr += jnp.sum(err**2)
+            linf_val = max(linf_val, float(jnp.max(jnp.abs(err))))
+
+            x = x_seq[..., :args.spatial_dim].reshape(-1, args.spatial_dim)
+            t = x_seq[..., -1:].reshape(-1, 1)
+            keys = jax.random.split(jax.random.PRNGKey(0), x.shape[0])
+            res = jax.vmap(lambda xv, tv, k: eqn.res(xv, tv, u_fn, eqn_cfg, k))(x, t, keys)
+            res_sum += float(jnp.mean(jnp.abs(res)))
+            res_max = max(res_max, float(jnp.max(jnp.abs(res))))
+        l1_rel = float(l1_total / y_true_l1)
+        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
+        linf_rel = float(linf_val / float(jnp.max(jnp.abs(test_truths))))
+        res_mean = float(res_sum / test_seqs.shape[0])
+        res_max_val = float(res_max)
+    else:
+        xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
+        y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
+        y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
+        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
+        l2_rel = l1_rel
+        linf_rel = l1_rel
+        res_mean = res_max_val = 0.0
+
+    mass_err = energy_err = 0.0
+    if eqn_cfg.name == "KdV":
+        rng = jax.random.PRNGKey(0)
+        x_m, t_m, _, _, _ = sample_domain_fn(eqn_cfg.mc_batch_size, 0, rng)
+        t0 = jnp.zeros_like(t_m)
+        tT = jnp.ones_like(t_m) * eqn_cfg.T
+        mass0 = eqns.KdV_mass(x_m, t0, u_fn, eqn_cfg)
+        massT = eqns.KdV_mass(x_m, tT, u_fn, eqn_cfg)
+        energy0 = eqns.KdV_energy(x_m, t0, u_fn, eqn_cfg)
+        energyT = eqns.KdV_energy(x_m, tT, u_fn, eqn_cfg)
+        mass_err = float(jnp.abs(massT - mass0))
+        energy_err = float(jnp.abs(energyT - energy0))
+
+    return l1_rel, l2_rel, linf_rel, res_mean, res_max_val, mass_err, energy_err
+
+
 
 # -----------------------------------------------------------------------------
 # Training state
@@ -953,67 +1004,6 @@ def main():
         if seq_vis.shape[-1] > 2:
             seq_vis = seq_vis[..., :2]
         visualize_sequences(seq_vis, x_ordering=args.x_ordering)
-
-
-
-def eval_model(mamba, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
-    """Evaluate the model and return various error metrics."""
-    if not eqn.is_traj:
-        l1_total, l2_total_sqr, linf_val = 0.0, 0.0, 0.0
-        res_sum, res_max = 0.0, 0.0
-        def u_fn(x, t):
-            xt = jnp.concatenate([x, t])
-            seq = jnp.broadcast_to(xt, (1, args.seq_len, xt.shape[0]))
-            out = mamba.apply({"params": params}, seq)
-            if out.ndim == 3:
-                out = out[0, -1]
-            return jnp.squeeze(out)
-        for b in range(test_seqs.shape[0]):
-            x_seq = test_seqs[b]
-            y_true = test_truths[b]
-            y_pred = mamba.apply({"params": params}, x_seq)
-            if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
-                y_pred = y_pred.squeeze(-1)
-            err = y_pred - y_true
-            l1_total += jnp.sum(jnp.abs(err))
-            l2_total_sqr += jnp.sum(err**2)
-            linf_val = max(linf_val, float(jnp.max(jnp.abs(err))))
-
-            x = x_seq[..., :args.spatial_dim].reshape(-1, args.spatial_dim)
-            t = x_seq[..., -1:].reshape(-1, 1)
-            keys = jax.random.split(jax.random.PRNGKey(0), x.shape[0])
-            res = jax.vmap(lambda xv, tv, k: eqn.res(xv, tv, u_fn, eqn_cfg, k))(x, t, keys)
-            res_sum += float(jnp.mean(jnp.abs(res)))
-            res_max = max(res_max, float(jnp.max(jnp.abs(res))))
-        l1_rel = float(l1_total / y_true_l1)
-        l2_rel = float(jnp.sqrt(l2_total_sqr) / y_true_l2)
-        linf_rel = float(linf_val / float(jnp.max(jnp.abs(test_truths))))
-        res_mean = float(res_sum / test_seqs.shape[0])
-        res_max_val = float(res_max)
-    else:
-        xt_zero = jnp.zeros((1, args.seq_len, args.spatial_dim + 1))
-        y_pred = mamba.apply({"params": params}, xt_zero)[0, 0]
-        y_true = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
-        l1_rel = float(jnp.abs(y_pred - y_true) / jnp.abs(y_true))
-        l2_rel = l1_rel
-        linf_rel = l1_rel
-        res_mean = res_max_val = 0.0
-
-    mass_err = energy_err = 0.0
-    if eqn_cfg.name == "KdV":
-        rng = jax.random.PRNGKey(0)
-        x_m, t_m, _, _, _ = sample_domain_fn(eqn_cfg.mc_batch_size, 0, rng)
-        t0 = jnp.zeros_like(t_m)
-        tT = jnp.ones_like(t_m) * eqn_cfg.T
-        mass0 = eqns.KdV_mass(x_m, t0, u_fn, eqn_cfg)
-        massT = eqns.KdV_mass(x_m, tT, u_fn, eqn_cfg)
-        energy0 = eqns.KdV_energy(x_m, t0, u_fn, eqn_cfg)
-        energyT = eqns.KdV_energy(x_m, tT, u_fn, eqn_cfg)
-        mass_err = float(jnp.abs(massT - mass0))
-        energy_err = float(jnp.abs(energyT - energy0))
-
-    return l1_rel, l2_rel, linf_rel, res_mean, res_max_val, mass_err, energy_err
-
 
 if __name__ == "__main__":
     main()
