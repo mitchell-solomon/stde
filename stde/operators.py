@@ -1,6 +1,4 @@
 from typing import Callable, Sequence, Tuple
-
-import haiku as hk
 import jax
 import jax.numpy as jnp
 # from folx import forward_laplacian
@@ -20,9 +18,9 @@ def partial_i(fn: Callable, i: int, *args):
   return lambda x: fn(*[arg if arg is not None else x for arg in p_args])
 
 
-def get_sdgd_idx_set(cfg: EqnConfig) -> Array:
+def get_sdgd_idx_set(cfg: EqnConfig, *, key: jax.Array) -> Array:
+  """Return a set of randomly chosen dimension indices."""
   if cfg.rand_batch_size != 0:
-    key = hk.next_rng_key()
     idx_set = jax.random.choice(
       key, cfg.dim, shape=(cfg.rand_batch_size,), replace=False
     )
@@ -39,6 +37,8 @@ def hvp(f, x, v):
 def get_hutchinson_random_vec(
   idx_set: Array,
   cfg: EqnConfig,
+  *,
+  key: jax.Array,
   with_time: bool = False,
 ) -> Float[Array, "x_dim"]:
   """Return a random vector on sdgd sampled dimensions, with Rademacher
@@ -46,14 +46,13 @@ def get_hutchinson_random_vec(
 
   If with_time, add a one-hot time dimension at the end.
   """
-  key = hk.next_rng_key()
   d = cfg.rand_batch_size or cfg.dim
   if cfg.stde_dist == "normal":
     rand_vec = jax.random.normal(key, shape=(cfg.rand_batch_size, d))
   elif cfg.stde_dist == "rademacher":
     rand_vec = 2 * (
-      jax.random
-      .randint(key, shape=(cfg.rand_batch_size, d), minval=0, maxval=2) - 0.5
+      jax.random.randint(key, shape=(cfg.rand_batch_size, d), minval=0, maxval=2)
+      - 0.5
     )
   else:
     raise ValueError
@@ -79,7 +78,7 @@ def hte(
   is non‑zero.  The estimation relies on JAX's ``jet`` API to obtain
   Hessian‑vector products.
 
-  Returns a callable ``f_trace(*xs)`` that outputs
+  Returns a callable ``f_trace(*xs, key)`` that outputs
 
   ``idx_set`` : the sampled indices used for the estimator.
   ``f_val``   : the scalar function value.
@@ -87,7 +86,8 @@ def hte(
   """
 
   def fn_trace(
-    *xs: Sequence[Float[types.NPArray, "xi_dim"]]
+    *xs: Sequence[Float[types.NPArray, "xi_dim"]],
+    key: jax.Array,
   ) -> Tuple[
     Integer[Array, "xi_dim"],
     Float[Array, "1"],
@@ -101,11 +101,12 @@ def hte(
     # Fix all other arguments so that ``f_partial`` depends only on ``x_i``.
     f_partial = partial_i(fn, argnums, *xs)
 
+    key_idx, key_vec = jax.random.split(key)
     # Randomly select a subset of coordinates for the Hutchinson estimator.
-    idx_set = get_sdgd_idx_set(cfg)
+    idx_set = get_sdgd_idx_set(cfg, key=key_idx)
 
     # Draw random vectors supported on ``idx_set``.
-    rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg)
+    rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg, key=key_vec)
 
     # Build a second-order Taylor expansion using ``jet`` to obtain
     # Hessian-vector products for each random vector ``v``.
@@ -151,7 +152,8 @@ def hess_diag(
   """
 
   def fn_hess_diag(
-    *xs: Sequence[Float[types.NPArray, "xi_dim"]]
+    *xs: Sequence[Float[types.NPArray, "xi_dim"]],
+    key: jax.Array,
   ) -> Tuple[
     Integer[Array, "xi_dim"],
     Float[Array, "1"],
@@ -165,8 +167,9 @@ def hess_diag(
 
     # create a partial function in which only x_i is a variable
     f_partial = partial_i(fn, argnums, *xs)
+    key_idx, key_vec = jax.random.split(key)
     # indices of x_i along which the hessian diagonal is computed
-    idx_set = get_sdgd_idx_set(cfg)
+    idx_set = get_sdgd_idx_set(cfg, key=key_idx)
 
     if cfg.hess_diag_method == "folx":
       # the folx package provides a forward-mode Laplacian operator
@@ -198,7 +201,7 @@ def hess_diag(
       )
 
       # generate random vectors on the sampled subset of dimensions
-      rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg, with_time)
+      rand_sub_vec = get_hutchinson_random_vec(idx_set, cfg, key=key_vec, with_time=with_time)
 
       # evaluate the function and its Hessian-vector products
       f_vals, (_, hvps) = jax.vmap(taylor_2)(rand_sub_vec)

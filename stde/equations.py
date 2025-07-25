@@ -77,6 +77,7 @@ def HJB_LIN_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""Returns the residual to the HJB-LIN equation, which is the
   LHS-RHS of the following equation:
@@ -96,7 +97,7 @@ def HJB_LIN_res(
     t = xt[cfg.dim:]
     return u(x, t)
 
-  _, _, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  _, _, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
 
   u_xx: types.x_like = u_d2[:-1]
   u_x: types.x_like = u_d1[:-1]
@@ -151,6 +152,7 @@ def HJB_LQG_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""Returns the residual to the HJB-LQG equation, which is the
   LHS of the following equation:
@@ -170,7 +172,7 @@ def HJB_LQG_res(
     t = xt[cfg.dim:]
     return u(x, t)
 
-  _, _, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  _, _, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
 
   u_xx: types.x_like = u_d2[:-1]
   u_x: types.x_like = u_d1[:-1]
@@ -247,6 +249,7 @@ def BSB_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   assert cfg.hess_diag_method != "dense_stde"
   xt: Float[Array, "xt_dim"] = jnp.concatenate([x, t], axis=-1)
@@ -257,7 +260,7 @@ def BSB_res(
     return u(x, t)
 
   u_: Float[Array, "1"]
-  idx_set, u_, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  idx_set, u_, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
   u_xx: types.x_like = u_d2[:-1]
   u_x: types.x_like = u_d1[:-1]
   u_t: types.t_like = u_d1[-1:]
@@ -301,6 +304,7 @@ def Wave_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""
   .. math::
@@ -315,7 +319,7 @@ def Wave_res(
     t = xt[cfg.dim:]
     return u(x, t)
 
-  _, _, _, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  _, _, _, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
 
   u_xx: types.x_like = u_d2[:-1]
   u_tt: types.t_like = u_d2[-1:]
@@ -430,13 +434,15 @@ def get_inhomo_res_fn_from_sol(op_fn: Callable, sol_fn: Callable):
     t: types.t_like,
     u: types.U,
     cfg: EqnConfig,
+    key: jax.Array,
   ) -> Float[Array, "xt_dim"]:
     r"""
     .. math::
     L u(x) = g(x)
     """
-    Lu = op_fn(x, t, u, cfg)
-    g = op_fn(x, t, partial(sol_fn, cfg=cfg), cfg)
+    key_op1, key_op2 = jax.random.split(key)
+    Lu = op_fn(x, t, u, cfg, key=key_op1)
+    g = op_fn(x, t, partial(sol_fn, cfg=cfg), cfg, key=key_op2)
     return Lu - g
 
   return res_fn
@@ -456,17 +462,20 @@ def get_inhomo_res_fn(
     t: types.t_like,
     u: types.U,
     cfg: EqnConfig,
+    key: jax.Array,
   ) -> Float[Array, "xt_dim"]:
     r"""
     .. math::
     L u(x) = g(x)
     """
     if with_g:
-      Lu, Lu_grad, idx_set_g = op_fn(x, t, u, cfg)
+      key_op, key = jax.random.split(key)
+      Lu, Lu_grad, idx_set_g = op_fn(x, t, u, cfg, key=key_op)
       g, g_grad = jax.value_and_grad(inhomo_fn)(x, cfg)
       return Lu - g, Lu_grad - g_grad[idx_set_g]
     else:
-      Lu = op_fn(x, t, u, cfg)
+      key_op, key = jax.random.split(key)
+      Lu = op_fn(x, t, u, cfg, key=key_op)
       g = inhomo_fn(x, cfg)
       return Lu - g
 
@@ -478,9 +487,10 @@ def Poisson_op(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   u_xx: types.x_like
-  _, _, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  _, _, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
   return u_xx.sum()
 
 
@@ -506,6 +516,7 @@ def NLS_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   """Residual of the 1D cubic Nonlinear Schrödinger equation.
 
@@ -614,6 +625,7 @@ def Burgers_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   """Residual for the 1D viscous Burgers' equation."""
   xt = jnp.concatenate([x, t], axis=-1)
@@ -623,7 +635,7 @@ def Burgers_res(
     t_ = xt[cfg.dim :]
     return jnp.squeeze(u(x_, t_))
 
-  _, u_val, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  _, u_val, u_d1, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
   u_x = u_d1[:-1]
   u_t = u_d1[-1:]
   u_xx = u_d2[:-1]
@@ -817,6 +829,7 @@ def AllenCahn_op(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""
   .. math::
@@ -824,7 +837,7 @@ def AllenCahn_op(
   """
   u_: Float[Array, "1"]
   u_xx: types.x_like
-  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
   return u_xx.sum() + u_ - u_**3
 
 
@@ -852,9 +865,11 @@ def AllenCahnTwobodyG_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ):
   dim = cfg.dim
-  idx_set_i = get_sdgd_idx_set(cfg)
+  key_i, key = jax.random.split(key)
+  idx_set_i = get_sdgd_idx_set(cfg, key=key_i)
 
   u_partial = partial(u, t=t)
 
@@ -877,7 +892,8 @@ def AllenCahnTwobodyG_res(
     u_res_grad_j = u_iij + u_j - 3 * u_**2 * u_j - g_x[j]
     return u_ii, u_res_grad_j
 
-  idx_set_j = get_sdgd_idx_set(cfg)
+  key_j, key_hess = jax.random.split(key)
+  idx_set_j = get_sdgd_idx_set(cfg, key=key_j)
 
   if cfg.hess_diag_method == "sparse_stde":
     u_ii, g_res = jax.vmap(res_j_fn)(idx_set_i, idx_set_j)
@@ -885,7 +901,7 @@ def AllenCahnTwobodyG_res(
     u_lapl = (u_ii * dim / cfg.rand_batch_size).sum()
     res = u_lapl + u_ - u_**3 - g
   else:
-    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key_hess)
     res = u_xx.sum() + u_ - u_**3 - g
 
     def res_j_baseline_fn(i, j):
@@ -919,9 +935,11 @@ def SineGordonTwobodyG_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ):
   dim = cfg.dim
-  idx_set_i = get_sdgd_idx_set(cfg)
+  key_i, key = jax.random.split(key)
+  idx_set_i = get_sdgd_idx_set(cfg, key=key_i)
 
   u_partial = partial(u, t=t)
 
@@ -944,7 +962,8 @@ def SineGordonTwobodyG_res(
     u_res_grad_j = u_iij + jnp.cos(u_) * u_j - g_x[j]
     return u_ii, u_res_grad_j
 
-  idx_set_j = get_sdgd_idx_set(cfg)
+  key_j, key_hess = jax.random.split(key)
+  idx_set_j = get_sdgd_idx_set(cfg, key=key_j)
 
   if cfg.hess_diag_method == "sparse_stde":
     u_ii, g_res = jax.vmap(res_j_fn)(idx_set_i, idx_set_j)
@@ -952,7 +971,7 @@ def SineGordonTwobodyG_res(
     u_lapl = (u_ii * dim / cfg.rand_batch_size).sum()
     res = u_lapl + jnp.sin(u_) - g
   else:
-    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key_hess)
     res = u_xx.sum() + jnp.sin(u_) - g
 
     def res_j_baseline_fn(i, j):
@@ -984,9 +1003,11 @@ def PoissonTwobodyG_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   dim = cfg.dim
-  idx_set_i = get_sdgd_idx_set(cfg)
+  key_i, key = jax.random.split(key)
+  idx_set_i = get_sdgd_idx_set(cfg, key=key_i)
 
   u_partial = partial(u, t=t)
 
@@ -1009,7 +1030,8 @@ def PoissonTwobodyG_res(
     u_res_grad_j = u_iij - g_x[j]
     return u_ii, u_res_grad_j
 
-  idx_set_j = get_sdgd_idx_set(cfg)
+  key_j, key_hess = jax.random.split(key)
+  idx_set_j = get_sdgd_idx_set(cfg, key=key_j)
 
   if cfg.hess_diag_method == "sparse_stde":
     u_ii, g_res = jax.vmap(res_j_fn)(idx_set_i, idx_set_j)
@@ -1017,7 +1039,7 @@ def PoissonTwobodyG_res(
     u_lapl = (u_ii * dim / cfg.rand_batch_size).sum()
     res = u_lapl - g
   else:
-    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+    _, u_, u_x, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key_hess)
     res = u_xx.sum() - g
 
     def res_j_baseline_fn(i, j):
@@ -1072,9 +1094,11 @@ def get_dt_res_fn(op_fn: Callable) -> Callable:
     t: types.t_like,
     u: types.U,
     cfg: EqnConfig,
+    key: jax.Array,
   ) -> Float[Array, "1"]:
     u_t = jax.grad(u, argnums=1)(x, t)
-    res = u_t - op_fn(x, t, u, cfg)
+    key_op, key = jax.random.split(key)
+    res = u_t - op_fn(x, t, u, cfg, key=key_op)
     return jnp.squeeze(res)
 
   return res_fn
@@ -1085,6 +1109,7 @@ def SineGordon_op(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "xt_dim"]:
   r"""
   .. math::
@@ -1092,7 +1117,7 @@ def SineGordon_op(
   """
   u_: Float[Array, "1"]
   u_xx: types.x_like
-  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
   return u_xx.sum() + jnp.sin(u_)
 
 
@@ -1118,6 +1143,7 @@ def SineGordon_op_G(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "xt_dim"]:
   r"""
   .. math::
@@ -1125,7 +1151,7 @@ def SineGordon_op_G(
   """
   u_: Float[Array, "1"]
   u_xx: types.x_like
-  idx_set, u_, u_y, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  idx_set, u_, u_y, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
 
   # compute gPINN part
 
@@ -1143,9 +1169,9 @@ def SineGordon_op_G(
   )[1][6] / 105
 
   # sample gPINN dim
-  key = hk.next_rng_key()
+  key, key_g = jax.random.split(key)
   idx_set_g = jax.random.choice(
-    key, cfg.dim, shape=(cfg.n_gpinn_vec,), replace=False
+    key_g, cfg.dim, shape=(cfg.n_gpinn_vec,), replace=False
   )
 
   u_xxy = jax.vmap(
@@ -1194,6 +1220,7 @@ def KdV_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""
   .. math::
@@ -1208,7 +1235,7 @@ def KdV_res(
     t = xt[cfg.dim:]
     return u(x, t)
 
-  _, _, _, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt)
+  _, _, _, u_d2 = hess_diag(u_xt, cfg, with_time=True)(xt, key=key)
 
   u_xx: types.x_like = u_d2[:-1]
   u_tt: types.t_like = u_d2[-1:]
@@ -1286,6 +1313,7 @@ def KdV2d_res(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""
   .. math::
@@ -1317,7 +1345,8 @@ def KdV2d_res(
     u_xy, _, u_xxxy = jet.jet(
       lambda x_: u_y_fn(x_, y, t), (x,), series=((1.0, 0.0, 0.0),)
     )[1]
-    _, _, u_d1, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t)
+    key, key_hd = jax.random.split(key)
+    _, _, u_d1, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t, key=key_hd)
 
     u_x: types.x_like = u_d1[:-1]
     u_y: types.x_like = u_d1[-1:]
@@ -1390,7 +1419,8 @@ def KdV2d_res(
     u_x, u_xx, _, u_xxxx = jet.jet(
       lambda x_: u_fn(x_, y, t), (x,), series=((1.0, 0.0, 0.0, 0.0),)
     )[1]
-    u_, _, _, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t)
+    key, key_hd = jax.random.split(key)
+    u_, _, _, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t, key=key_hd)
     u_yy: types.x_like = u_d2[-1:]
 
   elif case == 6:
@@ -1404,7 +1434,8 @@ def KdV2d_res(
     u_x, u_xx, _, u_xxxx = jet.jet(
       lambda x_: u_fn(x_, y, t), (x,), series=((1.0, 0.0, 0.0, 0.0),)
     )[1]
-    u_, _, _, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t)
+    key, key_hd = jax.random.split(key)
+    u_, _, _, u_d2 = hess_diag(u, cfg, argnums=0)(xy, t, key=key_hd)
     u_yy: types.x_like = u_d2[-1:]
 
   if True:  # KdV
@@ -1705,9 +1736,11 @@ def get_traj_res_fn(op_fn: Callable) -> Callable:
     t: Float[Array, "n_t 1"],
     u: types.U,
     cfg: EqnConfig,
+    key: jax.Array,
   ):
     u_t: types.t_like = jax.grad(u, argnums=1)(x, t)
-    res = u_t + op_fn(x, t, u, cfg)
+    key_op, _ = jax.random.split(key)
+    res = u_t + op_fn(x, t, u, cfg, key=key_op)
     return res
 
   return res_fn
@@ -1762,6 +1795,7 @@ def SemilinearHeat_op(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "1"]:
   r"""
   .. math::
@@ -1769,7 +1803,7 @@ def SemilinearHeat_op(
   """
   u_: Float[Array, "1"]
   u_xx: types.x_like
-  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
   u_sqr = u_**2
   return u_xx.sum() + (1 - u_sqr) / (1 + u_sqr)
 
@@ -1857,6 +1891,7 @@ def SineGordonTime_op(
   t: types.t_like,
   u: types.U,
   cfg: EqnConfig,
+  key: jax.Array,
 ) -> Float[Array, "xt_dim"]:
   r"""
   .. math::
@@ -1864,7 +1899,7 @@ def SineGordonTime_op(
   """
   u_: Float[Array, "1"]
   u_xx: types.x_like
-  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t)
+  _, u_, _, u_xx = hess_diag(u, cfg, argnums=0)(x, t, key=key)
   return u_xx.sum() + cfg.dim * jnp.sin(u_ / cfg.dim)
 
 
@@ -1888,6 +1923,7 @@ def pinn_loss_fn(
   u: types.U,
   cfg: EqnConfig,
   eqn: Equation,
+  key: jax.Array,
 ):
   r"""Return the PINN loss for of an equation (represented by eqn). The domain
   residual is given by the eqn.res function, and the boundary condition
@@ -1901,16 +1937,18 @@ def pinn_loss_fn(
   domain_res: Float[types.NPArray, "*batch 1"]
   g_res: Float[types.NPArray, "*batch x_dim"]
 
-  res_fn = lambda x_, t_: eqn.res(x_, t_, u, cfg)
+  res_fn = lambda x_, t_, k_: eqn.res(x_, t_, u, cfg, k_)
+  keys = jax.random.split(key, x.shape[0]) if x is not None else jnp.array([])
 
   if eqn.with_g:
-    domain_res, g_res = jax.vmap(res_fn)(x, t)
+    domain_res, g_res = jax.vmap(res_fn)(x, t, keys)
   else:
-    domain_res = jax.vmap(res_fn)(x, t)
+    domain_res = jax.vmap(res_fn)(x, t, keys)
 
   if cfg.unbiased:
     # NOTE: create a separate independent sample set
-    domain_res_2 = jax.vmap(res_fn)(x, t)
+    keys2 = jax.random.split(key, x.shape[0])
+    domain_res_2 = jax.vmap(res_fn)(x, t, keys2)
     domain_loss = jnp.mean(jax.lax.stop_gradient(domain_res) * domain_res_2)
 
   else:  # biased
