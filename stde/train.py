@@ -32,7 +32,7 @@ import pprint
 import re
 
 
-from my_mamba import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
+from stde.model import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
 from stde.config import EqnConfig, ModelConfig
 from stde import equations as eqns
 

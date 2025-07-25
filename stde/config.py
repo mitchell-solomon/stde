@@ -22,7 +22,6 @@ class EqnConfig:
     "Poisson",
     "NLS",
     "Burgers",
-
     # "PoissonHouman",
     # "PoissonTwobody",
     # "PoissonTwobodyG",
