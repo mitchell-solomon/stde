@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-# Run train_bimamba.py for every PDE defined in EqnConfig.
+# Run stde/train.py for every PDE defined in EqnConfig.
 # For each PDE we run once with sparse_stde and once with backward-mode AD
 # (stacked Hessian calculation).  Logs are written to logs/ and runs continue
 # even if an error occurs.
 
 set -u
 
-# Main arguments for train_bimamba.py (edit as needed)
+# Main arguments for stde/train.py (edit as needed)
 EPOCHS=10000
 EVAL_EVERY=5000
 LR=1e-4
@@ -54,7 +54,7 @@ PY
             LOG_FILE="logs/${PDE}_${METHOD}_d${DIM}.log"
             RUN_NAME="${PDE}_${METHOD}_d${DIM}"
             echo "Running $PDE with $METHOD and dim $DIM" | tee -a "$LOG_FILE"
-            if python train_bimamba.py \
+            if python -m stde.train \
                 --eqn_name "$PDE" \
                 --spatial_dim "$DIM" \
                 --hess_diag_method "$METHOD" \

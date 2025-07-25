@@ -55,9 +55,9 @@ To run the amortized gradient-enhanced PINN described in Appendix I.4.2, change 
 This repository provides utilities for physics-informed neural network (PINN)
 experiments built around stochastic Taylor derivative estimators (STDE).  The
 core functionality lives inside the `stde/` package while scripts such as
-`train_bimamba.py` offer ready-to-run training setups.
+`stde/train.py` offer ready-to-run training setups.
 
-`train_bimamba.py` trains a PINN composed of bidirectional MAMBA blocks. Key
+`stde/train.py` trains a PINN composed of bidirectional MAMBA blocks. Key
 methods include:
 
 - **`sample_domain_seq_fn`** – samples sequences of domain points via the
