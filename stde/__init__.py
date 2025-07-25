@@ -1,11 +1,11 @@
-from . import config, equations, model, operators, optimize, types
+from . import config, equations, model, operators, types, mlp
 
 __all__ = [
   "config",
   "equations",
   "model",
+  "mlp",
   "operators",
-  "optimize",
   "train",
   "types",
 ]
