@@ -29,6 +29,7 @@ import pprint
 import re
 
 from stde.model import BidirectionalMamba, MambaConfig, DiagnosticsConfig, SSMConfig
+from stde.mlp import MlpBackbone, MlpConfig
 from stde.config import EqnConfig, ModelConfig, GDConfig
 from stde import equations as eqns
 
@@ -462,12 +463,16 @@ def main():
                 x_out = nn.Dense(1, name="mlp_proj", kernel_init=nn.initializers.lecun_normal())(x_out)
                 x_out = x_out.squeeze(-1)
             else:
-                h = x.reshape(B * L, D)
-                for _ in range(self.model_cfg.depth - 1):
-                    h = nn.Dense(self.model_cfg.width)(h)
-                    h = nn.tanh(h)
-                h = nn.Dense(1)(h)
-                x_out = h.reshape(B, L)
+                mlp_cfg = MlpConfig(
+                    width=self.model_cfg.width,
+                    depth=self.model_cfg.depth,
+                    w_init=self.model_cfg.w_init,
+                    b_init=self.model_cfg.b_init,
+                    block_size=self.model_cfg.block_size,
+                    use_conv=self.model_cfg.use_conv,
+                    hidden_sizes=self.model_cfg.hidden_sizes,
+                )
+                x_out = MlpBackbone(mlp_cfg, time_dependent=self.eqn.time_dependent)(x)
             # enforce PDE-specific boundary condition
             if self.eqn.time_dependent:
                 x_part, t_part = x_in[..., : args.spatial_dim], x_in[..., args.spatial_dim :]
