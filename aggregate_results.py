@@ -1,40 +1,47 @@
-"""Utility to aggregate experiment outputs and visualize error metrics."""
+"""Utilities to aggregate experiment outputs and analyze ablations."""
+
+from __future__ import annotations
 
 import os
 import json
+from pathlib import Path
+from typing import Iterable, Sequence
 
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from scipy import stats
 
 
-def aggregate_results(results_dir="_results"):
-    """Load config and evaluation results from each run into a DataFrame."""
-    records = []
-    if not os.path.isdir(results_dir):
+def aggregate_results(results_dir: str = "_results") -> pd.DataFrame:
+    """Recursively load all runs under ``results_dir`` into a DataFrame."""
+    base = Path(results_dir)
+    if not base.is_dir():
         raise FileNotFoundError(f"results directory '{results_dir}' not found")
 
-    for run in sorted(os.listdir(results_dir)):
-        run_path = os.path.join(results_dir, run)
-        if not os.path.isdir(run_path):
+    records = []
+    for cfg_path in base.rglob("config.json"):
+        run_dir = cfg_path.parent
+        res_path = run_dir / "final_eval_results.json"
+        if not res_path.exists():
             continue
 
-        cfg_path = os.path.join(run_path, "config.json")
-        res_path = os.path.join(run_path, "final_eval_results.json")
-        if not (os.path.exists(cfg_path) and os.path.exists(res_path)):
-            continue
-
-        with open(cfg_path) as f:
+        with cfg_path.open() as f:
             config = json.load(f)
-        with open(res_path) as f:
+        with res_path.open() as f:
             results = json.load(f)
 
-        record = {"run": run}
+        rel_run = str(run_dir.relative_to(base))
+        record = {"run": rel_run}
         record.update(config)
         record.update(results)
         records.append(record)
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df["variant"] = df["run"].apply(lambda r: Path(r).parts[0])
+        df["seed"] = df.get("SEED", df["run"].apply(lambda r: Path(r).parts[1] if len(Path(r).parts) > 1 else -1))
+    return df
 
 
 def plot_scatter(df, xcol, ycol, out_file="aggregate_plot.png"):
@@ -58,11 +65,87 @@ def plot_scatter(df, xcol, ycol, out_file="aggregate_plot.png"):
     print(f"Plot saved to {out_file}")
 
 
+def summarize_variants(df: pd.DataFrame, metrics: Sequence[str]) -> pd.DataFrame:
+    """Return mean and std of ``metrics`` grouped by variant."""
+    if df.empty:
+        return pd.DataFrame()
+
+    grouped = df.groupby("variant")[list(metrics)].agg(["mean", "std"])
+    # flatten column index
+    grouped.columns = [f"{m}_{stat}" for m, stat in grouped.columns]
+    return grouped.reset_index()
+
+
+def paired_ttests(
+    df: pd.DataFrame,
+    baseline: str,
+    metrics: Sequence[str],
+) -> pd.DataFrame:
+    """Perform paired t-tests comparing each variant to ``baseline``."""
+    results = []
+    if df.empty:
+        return pd.DataFrame()
+
+    keys = ["eqn_name", "seed"]
+    base_df = df[df["variant"] == baseline].set_index(keys)
+    for variant in df["variant"].unique():
+        if variant == baseline:
+            continue
+        comp_df = df[df["variant"] == variant].set_index(keys)
+        common = base_df.index.intersection(comp_df.index)
+        if len(common) == 0:
+            continue
+        for metric in metrics:
+            a = base_df.loc[common][metric]
+            b = comp_df.loc[common][metric]
+            t_stat, p_val = stats.ttest_rel(a, b)
+            results.append({
+                "variant": variant,
+                "metric": metric,
+                "t_stat": t_stat,
+                "p_value": p_val,
+                "n": len(common),
+            })
+    return pd.DataFrame(results)
+
+
+def markdown_table(df: pd.DataFrame, floatfmt: str = ".3e") -> str:
+    """Return DataFrame as a GitHub style Markdown table."""
+    if df.empty:
+        return "(no data)"
+    return df.to_markdown(index=False, floatfmt=floatfmt)
+
+
 if __name__ == "__main__":
-    df = aggregate_results()
-    print(df)
-    print(df.columns)
-    if not df.empty:
-        plot_scatter(df, "l1_rel", "best_loss", out_file="_results/l1_bloss.png")
-        plot_scatter(df, "l2_rel", "best_loss", out_file="_results/l2_bloss.png")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Aggregate experiment results")
+    parser.add_argument("--results_dir", type=str, default="_results")
+    parser.add_argument("--baseline", type=str, default="A1", help="variant used as baseline")
+    parser.add_argument(
+        "--metrics",
+        nargs="+",
+        default=["l1_rel", "total_time"],
+        help="metrics to summarize and compare",
+    )
+    parser.add_argument("--plot", action="store_true", help="create scatter plots")
+    args = parser.parse_args()
+
+    df = aggregate_results(args.results_dir)
+    if df.empty:
+        print("No runs found")
+        exit()
+
+    summary = summarize_variants(df, args.metrics)
+    print("\n## Summary")
+    print(markdown_table(summary))
+
+    ttest_df = paired_ttests(df, args.baseline, args.metrics)
+    if not ttest_df.empty:
+        print(f"\n## Paired t-tests vs {args.baseline}")
+        print(markdown_table(ttest_df))
+
+    if args.plot:
+        xcol, ycol = args.metrics[0], args.metrics[1] if len(args.metrics) > 1 else args.metrics[0]
+        plot_scatter(df, xcol, ycol, out_file=Path(args.results_dir) / "aggregate.png")
         
