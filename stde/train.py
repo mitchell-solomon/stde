@@ -90,7 +90,7 @@ parser.add_argument("--gamma", type=float, default=0.9995)
 parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "adamw", "sgd", "rmsprop"])
 parser.add_argument("--n_fgd_vec", type=int, default=0)
 parser.add_argument("--N_test", type=int, default=2000)
-parser.add_argument("--test_batch_size", type=int, default=40)
+parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--N_val", type=int, default=200, help="size of validation set")
 parser.add_argument("--val_batch_size", type=int, default=20, help="validation batch size")
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
@@ -162,6 +162,8 @@ parser.add_argument(
 # numberof bidirectional mamba blocks
 parser.add_argument("--num_mamba_blocks", type=int, default=1, help="number of bidirectional mamba blocks")
 parser.add_argument("--block_size", type=int, default=-1, help="weight sharing block size for MLP")
+parser.add_argument("--mlp_width", type=int, default=128, help="width of hidden layers in MLP backbone")
+parser.add_argument("--mlp_depth", type=int, default=4, help="number of layers in MLP backbone")
 
 # -- arguments for MambaConfig --
 parser.add_argument("--hidden_features",    type=int,    default=128,      help="hidden_features in each Mamba block")
@@ -257,10 +259,17 @@ eqn_cfg = EqnConfig(
     hess_diag_method=args.hess_diag_method,
     stde_dist=args.stde_dist,
 )
+if args.backbone == "MLP":
+    model_width = args.mlp_width
+    model_depth = args.mlp_depth
+else:
+    model_width = args.hidden_features
+    model_depth = args.num_mamba_blocks
+
 model_cfg = ModelConfig(
     net=args.backbone,
-    width=args.hidden_features,
-    depth=args.num_mamba_blocks,
+    width=model_width,
+    depth=model_depth,
     block_size=args.block_size,
 )
 

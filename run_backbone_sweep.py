@@ -9,8 +9,8 @@ import stde.equations as eqns
 
 
 MLP_SWEEP = {
-    "depth": [2, 4],
-    "width": [64, 128],
+    "mlp_depth": [2, 4],
+    "mlp_width": [64, 128],
     "block_size": [32, 64],
     "activation": ["tanh", "relu"],
 }
