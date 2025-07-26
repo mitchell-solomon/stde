@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
-# config.update("jax_enable_x64", True)
+config.update("jax_enable_x64", True)
 
 import numpy as np
 
