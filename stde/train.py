@@ -166,10 +166,10 @@ parser.add_argument("--mlp_width", type=int, default=128, help="width of hidden 
 parser.add_argument("--mlp_depth", type=int, default=4, help="number of layers in MLP backbone")
 
 # -- arguments for MambaConfig --
-parser.add_argument("--hidden_features",    type=int,    default=128,      help="hidden_features in each Mamba block")
+parser.add_argument("--hidden_features",    type=int,    default=8,      help="hidden_features in each Mamba block")
 parser.add_argument("--expansion_factor",   type=float,  default=2.0,     help="expansion factor in Mamba MLP")
 parser.add_argument("--dt_rank",            type=str,    default="auto", choices=["auto","full","low"], help="dt_rank setting")
-parser.add_argument("--activation",         type=str,    default="wave",  choices=["silu","relu","gelu","tanh", "wave"], help="activation fn")
+parser.add_argument("--activation",         type=str,    default="tanh",  choices=["silu","relu","gelu","tanh", "wave"], help="activation fn")
 parser.add_argument("--norm_type",          type=str,    default="none",  choices=["none","batch","layer", "group"], help="type of normalization")
 parser.add_argument("--dense_expansion",    type=int,    default=2,       help="dense expansion ratio")
 parser.add_argument("--complement",         action="store_true", help="use complement flag")
