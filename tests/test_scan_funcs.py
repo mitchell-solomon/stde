@@ -439,9 +439,10 @@ def test_scan_functions():
     plt.grid(True, alpha=0.3)
     
     # Plot 3: Detailed view of a specific sequence segment
-    segment_start = 40
-    segment_length = 20
-    segment_end = segment_start + segment_length
+    # make segment relative to overall sequence length
+    segment_start = int(0.25*L)
+    segment_end = int(0.75*L)
+    segment_length = segment_end - segment_start
     
     plt.subplot(2, 2, 3)
     for ch in range(min(D, 3)):  # Plot first 3 channels
