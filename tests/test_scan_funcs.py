@@ -256,21 +256,21 @@ def test_scan_functions():
     chunked_scan_jit = jax.jit(ssm_chunked_scan)
     
     # Warm-up JIT
-    _ = parallel_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
-    _ = recursive_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
-    _ = chunked_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
+    _ = parallel_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
+    _ = recursive_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
+    _ = chunked_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
     
     # Time the functions
     start_time = time.time()
-    y_parallel = parallel_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
+    y_parallel = parallel_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
     parallel_time = time.time() - start_time
     
     start_time = time.time()
-    y_recursive = recursive_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
+    y_recursive = recursive_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
     recursive_time = time.time() - start_time
     
     start_time = time.time()
-    y_chunked = chunked_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta)
+    y_chunked = chunked_scan_jit(x, Acoeff, Bcoeff, Ccoeff, Delta).block_until_ready()
     chunked_time = time.time() - start_time
     
     # Convert to numpy for plotting
@@ -579,17 +579,17 @@ def test_scan_functions():
         
         # Time the functions
         start_time = time.time()
-        _ = parallel_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta)
+        _ = parallel_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta).block_until_ready()
         parallel_time_N = time.time() - start_time
         parallel_times.append(parallel_time_N)
         
         start_time = time.time()
-        _ = recursive_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta)
+        _ = recursive_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta).block_until_ready()
         recursive_time_N = time.time() - start_time
         recursive_times.append(recursive_time_N)
         
         start_time = time.time()
-        _ = chunked_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta)
+        _ = chunked_scan_jit(x, Acoeff_N, Bcoeff_N, Ccoeff_N, Delta).block_until_ready()
         chunked_time_N = time.time() - start_time
         chunked_times.append(chunked_time_N)
         
