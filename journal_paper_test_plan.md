@@ -99,6 +99,18 @@ Define variants to isolate each component and run on all benchmarks:
 3. Hyperparameter sweep (depth, width, STDE samples).
 4. Paired t‑tests for significance.
 
+### Backbone Hyperparameter Sweep
+
+Run a small grid for each backbone on every PDE benchmark:
+
+* **MLP** – vary `depth`, `width`, `block_size` (when weight sharing is enabled)
+  and the activation function.
+* **MAMBA** – vary `num_mamba_blocks`, `hidden_features`, `expansion_factor`,
+  `dt_rank`, the activation function, and whether the blocks are bidirectional.
+
+Use the same training protocol as above for all combinations and report the best
+validation error per equation.
+
 ---
 
 ### Performance Metrics (per test)
