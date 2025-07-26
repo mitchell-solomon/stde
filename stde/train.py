@@ -91,6 +91,8 @@ parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "a
 parser.add_argument("--n_fgd_vec", type=int, default=0)
 parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=40)
+parser.add_argument("--N_val", type=int, default=200, help="size of validation set")
+parser.add_argument("--val_batch_size", type=int, default=20, help="validation batch size")
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
 parser.add_argument(
     "--use_seed_seq",
@@ -159,6 +161,7 @@ parser.add_argument(
 
 # numberof bidirectional mamba blocks
 parser.add_argument("--num_mamba_blocks", type=int, default=1, help="number of bidirectional mamba blocks")
+parser.add_argument("--block_size", type=int, default=-1, help="weight sharing block size for MLP")
 
 # -- arguments for MambaConfig --
 parser.add_argument("--hidden_features",    type=int,    default=128,      help="hidden_features in each Mamba block")
@@ -254,7 +257,12 @@ eqn_cfg = EqnConfig(
     hess_diag_method=args.hess_diag_method,
     stde_dist=args.stde_dist,
 )
-model_cfg = ModelConfig(net=args.backbone, width=args.hidden_features, depth=args.num_mamba_blocks)
+model_cfg = ModelConfig(
+    net=args.backbone,
+    width=args.hidden_features,
+    depth=args.num_mamba_blocks,
+    block_size=args.block_size,
+)
 
 eqn = getattr(eqns, eqn_cfg.name)
 if eqn.random_coeff:
@@ -360,13 +368,13 @@ else:
             res = res[0]
         return res
 
-def eval_model(model, params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args):
-    """Evaluate the model and return various error metrics."""
+def eval_model(model, params, eqn, eqn_cfg, seqs, truths, y_true_l1, y_true_l2, args):
+    """Evaluate the model on a dataset."""
     if not eqn.is_traj:
         l1_total, l2_total_sqr = 0.0, 0.0
-        for b in range(test_seqs.shape[0]):
-            x_seq = test_seqs[b]
-            y_true = test_truths[b]
+        for b in range(seqs.shape[0]):
+            x_seq = seqs[b]
+            y_true = truths[b]
             y_pred = model.apply({"params": params}, x_seq)
             if y_pred.ndim == 3 and y_pred.shape[-1] == 1:
                 y_pred = y_pred.squeeze(-1)
@@ -466,6 +474,7 @@ def main():
                     block_size=self.model_cfg.block_size,
                     use_conv=self.model_cfg.use_conv,
                     hidden_sizes=self.model_cfg.hidden_sizes,
+                    activation=args.activation,
                 )
                 x_out = MlpBackbone(mlp_cfg, time_dependent=self.eqn.time_dependent)(x)
             
@@ -639,8 +648,9 @@ def main():
     logger.info(f"num params: {num_params}")
     gpu_mems = []
 
-    # prepare test set (once)
+    # prepare test and validation sets (once)
     test_seqs = test_truths = None
+    val_seqs = val_truths = None
     if not eqn.is_traj:
         n_test_batches = args.N_test // args.test_batch_size
         test_seqs = []
@@ -664,19 +674,44 @@ def main():
         test_seqs = jnp.stack(test_seqs)       # (n_batches, B, L, D)
         test_truths = jnp.stack(test_truths)   # (n_batches, B, L)
 
+        # validation set generation
+        n_val_batches = args.N_val // args.val_batch_size
+        val_seqs = []
+        val_truths = []
+        for _ in tqdm(range(n_val_batches)):
+            rng_test, sample_rng = jax.random.split(rng_test)
+            x_val_seq, _ = sample_domain_seq_fn(
+                batch_size=args.val_batch_size,
+                rng=sample_rng,
+                seq_len=args.seq_len,
+                use_seed=args.use_seed_seq,
+            )
+            B, L, D = x_val_seq.shape
+            x_flat = x_val_seq.reshape((B * L, D))
+            y_flat = jax.vmap(sol_fn)(x_flat)
+            val_seqs.append(x_val_seq)
+            val_truths.append(y_flat.reshape((B, L)))
+        val_seqs = jnp.stack(val_seqs)
+        val_truths = jnp.stack(val_truths)
+
         # flatten all test ground-truth values into a single vector
         y_true_all = test_truths.reshape(-1)
+        y_val_all = val_truths.reshape(-1)
 
         # L1 norm of the entire test set
         y_true_l1 = float(jnp.sum(jnp.abs(y_true_all)))
+        y_val_l1 = float(jnp.sum(jnp.abs(y_val_all)))
 
         # L2 norm of the entire test set
         y_true_l2 = float(jnp.linalg.norm(y_true_all))
+        y_val_l2 = float(jnp.linalg.norm(y_val_all))
     else:
         # reference value only defined at x=0,t=0
         y_ref = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         y_true_l1 = jnp.abs(y_ref)
         y_true_l2 = jnp.abs(y_ref)
+        y_val_l1 = y_true_l1
+        y_val_l2 = y_true_l2
 
     @jax.jit
     def train_step(state: MambaTrainState) -> MambaTrainState:
@@ -711,7 +746,7 @@ def main():
 
         if step % args.eval_every == 0 or step == args.epochs - 1:
             l1_rel, l2_rel = eval_model(
-                model, state.params, eqn, eqn_cfg, test_seqs, test_truths, y_true_l1, y_true_l2, args)
+                model, state.params, eqn, eqn_cfg, val_seqs, val_truths, y_val_l1, y_val_l2, args)
             grad_norm = float(jnp.sqrt(
                 sum(jnp.vdot(g, g) for g in jax.tree_util.tree_leaves(grads))
             ))

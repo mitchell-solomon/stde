@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+from stde.model import WaveAct
+
 import jax.numpy as jnp
 import flax.linen as nn
 
@@ -27,11 +29,26 @@ class MlpConfig:
     block_size: int = -1
     use_conv: bool = False
     hidden_sizes: Sequence[int] = ()
+    activation: str = "tanh"
 
 
 class MlpBackbone(nn.Module):
     cfg: MlpConfig
     time_dependent: bool = False
+
+    def _activate(self, x):
+        if self.cfg.activation == "gelu":
+            return nn.gelu(x)
+        elif self.cfg.activation == "relu":
+            return nn.relu(x)
+        elif self.cfg.activation == "silu":
+            return nn.silu(x)
+        elif self.cfg.activation == "wave":
+            return WaveAct()(x)
+        elif self.cfg.activation == "tanh":
+            return nn.tanh(x)
+        else:
+            raise ValueError(f"unknown activation {self.cfg.activation}")
 
     @nn.compact
     def __call__(self, x):
@@ -70,7 +87,7 @@ class MlpBackbone(nn.Module):
             else:
                 x_body = x_body.reshape(x_body.shape[:-1] + (-1, self.cfg.block_size))
                 x_body = nn.Dense(1, name="linear_first", **init_kwargs)(x_body)
-                x_body = nn.tanh(x_body)
+                x_body = self._activate(x_body)
                 x_body = x_body[..., 0]
             if self.time_dependent:
                 xt = jnp.concatenate([x_body, xt[..., -1:]], axis=-1)
@@ -81,7 +98,7 @@ class MlpBackbone(nn.Module):
         hidden_sizes = list(self.cfg.hidden_sizes) if self.cfg.hidden_sizes else [self.cfg.width] * (self.cfg.depth - 1)
         for i, size in enumerate(hidden_sizes):
             h = nn.Dense(size, name=f"dense_{i}", **init_kwargs)(h)
-            h = nn.tanh(h)
+            h = self._activate(h)
         h = nn.Dense(1, name=f"dense_out", **init_kwargs)(h)
         out = h.reshape(B, L)
         return out
