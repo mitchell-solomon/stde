@@ -85,12 +85,12 @@ parser.add_argument(
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--eval_every", type=int, default=5000)
 parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--lr_decay", type=str, default="linear", choices=["none", "piecewise", "cosine", "linear", "exponential"])
+parser.add_argument("--lr_decay", type=str, default="cosine", choices=["none", "piecewise", "cosine", "linear", "exponential"])
 parser.add_argument("--gamma", type=float, default=0.9995)
 parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "adamw", "sgd", "rmsprop"])
 parser.add_argument("--n_fgd_vec", type=int, default=0)
 parser.add_argument("--N_test", type=int, default=2000)
-parser.add_argument("--test_batch_size", type=int, default=20)
+parser.add_argument("--test_batch_size", type=int, default=40)
 parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
 parser.add_argument(
     "--use_seed_seq",
@@ -102,20 +102,12 @@ parser.add_argument(
     "--seed_frac",
     type=float,
     default=0.01,
-    help="Relative neighbourhood size for --use_seed_seq as a fraction of the domain width",
+    help="Relative neighborhood size for --use_seed_seq as a fraction of the domain width",
 )
 
 parser.add_argument("--x_radius", type=float, default=1.0)
-parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="radial", 
+parser.add_argument("--x_ordering", type=str, choices=["none", "coordinate", "radial"], default="none", 
                     help="How to order your spatial sequence: `none` (leave random), `coordinate` (sort by x[0]), `radial` (sort by ∥x∥).")
-
-parser.add_argument(
-    "--sampling_mode", type=str,
-    choices=["random", "grid", "radial"],
-    default="random",
-    help="How to sample points: `random`=Monte‐Carlo; `grid`=even grid; "
-         "`radial`=random‐start radial lines"
-)
 
 parser.add_argument(
     "--hess_diag_method",
@@ -169,10 +161,10 @@ parser.add_argument(
 parser.add_argument("--num_mamba_blocks", type=int, default=1, help="number of bidirectional mamba blocks")
 
 # -- arguments for MambaConfig --
-parser.add_argument("--hidden_features",    type=int,    default=64,      help="hidden_features in each Mamba block")
+parser.add_argument("--hidden_features",    type=int,    default=128,      help="hidden_features in each Mamba block")
 parser.add_argument("--expansion_factor",   type=float,  default=2.0,     help="expansion factor in Mamba MLP")
 parser.add_argument("--dt_rank",            type=str,    default="auto", choices=["auto","full","low"], help="dt_rank setting")
-parser.add_argument("--activation",         type=str,    default="tanh",  choices=["silu","relu","gelu","tanh", "wave"], help="activation fn")
+parser.add_argument("--activation",         type=str,    default="wave",  choices=["silu","relu","gelu","tanh", "wave"], help="activation fn")
 parser.add_argument("--norm_type",          type=str,    default="none",  choices=["none","batch","layer", "group"], help="type of normalization")
 parser.add_argument("--dense_expansion",    type=int,    default=2,       help="dense expansion ratio")
 parser.add_argument("--complement",         action="store_true", help="use complement flag")
