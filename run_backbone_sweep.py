@@ -12,15 +12,15 @@ MLP_SWEEP = {
     "mlp_depth": [2, 4],
     "mlp_width": [64, 128],
     "block_size": [32, 64],
-    "activation": ["tanh", "relu"],
+    "activation": ["tanh", "gelu"],
 }
 
 MAMBA_SWEEP = {
     "num_mamba_blocks": [1, 2],
-    "hidden_features": [64, 128],
+    "hidden_features": [8, 64, 128],
     "expansion_factor": [2.0, 4.0],
-    "dt_rank": ["auto", "full"],
-    "activation": ["tanh", "silu"],
+    "dt_rank": ["auto"],
+    "activation": ["tanh", "gelu"],
     "bidirectional": [True, False],
 }
 
@@ -59,8 +59,8 @@ def main() -> None:
         ],
         help="equation names to run",
     )
-    parser.add_argument("--seeds", type=int, default=3, help="number of seeds")
-    parser.add_argument("--epochs", type=int, default=10000)
+    parser.add_argument("--seeds", type=int, default=1, help="number of seeds")
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--eval_every", type=int, default=50000000)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_test", type=int, default=20000)
