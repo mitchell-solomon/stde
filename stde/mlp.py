@@ -13,8 +13,6 @@ _INIT_MAP = {
 }
 
 _BIAS_INIT_MAP = {
-    "kaiming_uniform": nn.initializers.zeros,
-    "xavier_normal": nn.initializers.zeros,
     "default": nn.initializers.zeros,
 }
 
@@ -25,7 +23,7 @@ class MlpConfig:
     width: int = 128
     depth: int = 4
     w_init: str = "kaiming_uniform"
-    b_init: str = "kaiming_uniform"
+    b_init: str = "default"
     block_size: int = -1
     use_conv: bool = False
     hidden_sizes: Sequence[int] = ()
@@ -85,10 +83,17 @@ class MlpBackbone(nn.Module):
                 )(x_body[..., None])
                 x_body = x_body[..., 0]
             else:
-                x_body = x_body.reshape(x_body.shape[:-1] + (-1, self.cfg.block_size))
+                B_, L_, D_ = x_body.shape
+                x_body = x_body.reshape(B_ * L_, D_)
+                if D_ % self.cfg.block_size != 0:
+                    pad = self.cfg.block_size - (D_ % self.cfg.block_size)
+                    x_body = jnp.pad(x_body, ((0, 0), (0, pad)))
+                n_blocks = x_body.shape[1] // self.cfg.block_size
+                x_body = x_body.reshape(B_ * L_, n_blocks, self.cfg.block_size)
                 x_body = nn.Dense(1, name="linear_first", **init_kwargs)(x_body)
                 x_body = self._activate(x_body)
                 x_body = x_body[..., 0]
+                x_body = x_body.reshape(B_, L_, n_blocks)
             if self.time_dependent:
                 xt = jnp.concatenate([x_body, xt[..., -1:]], axis=-1)
             else:
