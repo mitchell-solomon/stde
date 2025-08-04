@@ -48,8 +48,9 @@ def aggregate_results(results_dir: str = "_results") -> pd.DataFrame:
 def plot_boxplot(df, metric_col, out_file="aggregate_bw_plot.png"):
     """Create a box plot of ``metric_col`` grouped by eqn_name and variant."""
     plt.figure(figsize=(8, 6))
-    sns.boxplot(data=df, x="eqn_name", y=metric_col, hue="variant")
+    sns.boxplot(data=df.sort_values(by="variant"), x="eqn_name", y=metric_col, hue="variant")
     plt.yscale('log')
+    plt.xticks(rotation=45, ha="right")
     plt.xlabel("Equation")
     plt.ylabel(metric_col)
     plt.title("Evaluation Results")
