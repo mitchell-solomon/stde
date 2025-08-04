@@ -155,10 +155,10 @@ if __name__ == "__main__":
     print("\n## Summary")
     print(markdown_table(summary))
 
-    ttest_df = paired_ttests(df, args.baseline, args.metrics)
-    if not ttest_df.empty:
-        print(f"\n## Paired t-tests vs {args.baseline}")
-        print(markdown_table(ttest_df))
+    # ttest_df = paired_ttests(df, args.baseline, args.metrics)
+    # if not ttest_df.empty:
+    #     print(f"\n## Paired t-tests vs {args.baseline}")
+    #     print(markdown_table(ttest_df))
 
     if args.plot:
         xcol, ycol = args.metrics[0], args.metrics[1] if len(args.metrics) > 1 else args.metrics[0]
