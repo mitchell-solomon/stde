@@ -93,7 +93,7 @@ parser.add_argument("--N_test", type=int, default=2000)
 parser.add_argument("--test_batch_size", type=int, default=20)
 parser.add_argument("--N_val", type=int, default=200, help="size of validation set")
 parser.add_argument("--val_batch_size", type=int, default=20, help="validation batch size")
-parser.add_argument("--seq_len", type=int, default=3, help="sequence length for Bi-MAMBA")
+parser.add_argument("--seq_len", type=int, default=4, help="sequence length for Bi-MAMBA")
 parser.add_argument(
     "--use_seed_seq",
     type=bool,

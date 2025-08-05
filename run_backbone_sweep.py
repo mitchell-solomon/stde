@@ -24,7 +24,7 @@ MAMBA_SWEEP = {
     "hidden_features": [8, 16],
     "expansion_factor": [2.0],
     "dt_rank": ["auto"],
-    "activation": ["tanh", "gelu", "wave", "relu"],
+    "activation": ["tanh", "gelu", "wave"],
     "bidirectional": [True, False],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
     "no_stde": [False, True],           # --no_stde (store_true)
@@ -61,12 +61,13 @@ def main():
         "--benchmarks",
         nargs="+",
         default=[
+            # "BSB",
             # "Poisson",
-            "SineGordonTwobody",
+            # "SineGordonTwobody",
             # "Wave",
             # "Burgers",
             # "KdV2d",
-            # "PoissonHouman",
+            "PoissonHouman",
             # "SineGordonTime",
             # "AllenCahnTime",
             # "SemilinearHeatTime",
@@ -78,10 +79,10 @@ def main():
     parser.add_argument("--eval_every", type=int, default=50000000)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_test", type=int, default=2000)
-    parser.add_argument("--test_batch_size", type=int, default=50)
-    parser.add_argument("--seq_len", type=int, default=8)
+    parser.add_argument("--test_batch_size", type=int, default=100)
+    parser.add_argument("--seq_len", type=int, default=4)
     parser.add_argument("--use_seed_seq", type=bool, default=True)
-    parser.add_argument("--seed_frac", type=float, default=0.01)
+    parser.add_argument("--seed_frac", type=float, default=0.05)
     parser.add_argument(
         "--results_dir",
         type=Path,
@@ -131,7 +132,7 @@ def main():
                         print(f"Skipping {run_dir} (already exists)")
                         continue
                     print(f"Running {run_dir}")
-                    run_name = f"{backbone}/{param_str}/{eqn_name}/{seed}"
+                    run_name = f"{backbone}/{eqn_name}/{param_str}/{seed}"
                     dim = default_dim(eqn_name)
                     cmd = [
                         "python",

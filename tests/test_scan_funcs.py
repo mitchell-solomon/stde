@@ -10,6 +10,7 @@ from jax.experimental.jet import jet
 from jax import config
 config.update("jax_enable_x64", True)
 
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -36,46 +37,6 @@ def compute_alpha_beta (x_chunk, Acoeff, B_chunk, Delta_chunk):
     alpha = compute_alpha (Acoeff, Delta_chunk)  # (chunk_size, B, D, N)
     beta = jnp.einsum ('lbn,lbd,lbd->lbdn', B_chunk, x_chunk, Delta_chunk)  # (chunk_size, B, D, N)
     return alpha, beta
-
-# # ─────────── OLD FUNCTION ───────────
-# @jit
-# def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
-#     """
-#     Replace all lax.scan logic with one-shot cumprod/cumsum.
-#     x:   (B, L, D)
-#     Acoeff: (D, N)
-#     Bcoeff: (B, L, N)
-#     Ccoeff: (B, L, N)
-#     Delta:  (B, L, D)
-#     returns y: (B, L, D)
-#     """
-#     # 1) transpose into time-major
-#     x_t     = einops.rearrange(x,     'b l d -> l b d')       # (L, B, D)
-#     B_t     = einops.rearrange(Bcoeff,'b l n -> l b n')       # (L, B, N)
-#     C_t     = einops.rearrange(Ccoeff,'b l n -> l b n')       # (L, B, N)
-#     Δ_t     = einops.rearrange(Delta, 'b l d -> l b d')       # (L, B, D)
-
-#     # 2) compute per-step α, β
-#     α, β    = compute_alpha_beta(x_t, Acoeff, B_t, Δ_t)        # each (L, B, D, N)
-
-#     # 3) prefix-product of α
-#     G       = jnp.cumprod(α, axis=0)                           # (L, B, D, N)
-#     ones    = jnp.ones_like(α[:1])                             # (1, B, D, N)
-#     G0      = jnp.concatenate([ones, G[:-1]], axis=0)         # (L, B, D, N)
-
-#     # 4) weighted prefix-sum of β
-#     S       = jnp.cumsum(β * G0, axis=0)                       # (L, B, D, N)
-
-#     # 5) recover h_t = G * h0 + S
-#     h0      = jnp.ones_like(α[0])                              # (B, D, N)
-#     h       = G * h0[None, ...] + S                            # (L, B, D, N)
-
-#     # 6) project through C
-#     y_t     = jnp.einsum('lbn,lbdn->lbd', C_t, h)              # (L, B, D)
-
-#     # 7) back to (B, L, D)
-#     return einops.rearrange(y_t, 'l b d -> b l d')
-# # ──────────────────────────────────────
 
 @jit
 def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):

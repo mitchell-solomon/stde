@@ -12,7 +12,7 @@ from jax import jit, numpy as jnp
 
 from jax.experimental.jet import jet
 from jax import config
-# config.update("jax_enable_x64", True)
+
 
 @struct.dataclass
 class DiagnosticsConfig:
@@ -102,7 +102,7 @@ def largest_factor_up_to(b,n):
         k -= 1
     return k
 
-# ─────────── NEW FUNCTION ───────────
+
 @jit
 def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
     """
@@ -135,8 +135,6 @@ def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
 
     return y
 
-# ──────────────────────────────────────
-
 @jit
 def inverse_softplus(x):
     return x + jnp.log(1 - jnp.exp(-x))
@@ -156,7 +154,7 @@ class SelectiveSSM(nn.Module):
     dt_proj: bool = True   # whether to use a linear projection (vs broadcast) to map dt_rank to D
 
     dt_min: float = 0.001  # 1/(long-range context length)
-    dt_max: float = 0.1    # 1/(short-range context length)
+    dt_max: float = 0.01    # 1/(short-range context length)
 
     a_init_scale: float = 1.0
 
