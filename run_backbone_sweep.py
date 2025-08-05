@@ -45,6 +45,13 @@ def iter_sweep(backbone: str):
     keys = list(grid.keys())
     for values in itertools.product(*grid.values()):
         params = dict(zip(keys, values))
+        # Skip incompatible configurations:
+        # When using reverse-mode AD, the no_stde flag (which toggles
+        # forward-mode options) has no effect.  In that case we only
+        # want to run the configuration without STDE, so skip combinations
+        # where ad_mode is reverse but no_stde is False.
+        if params.get("ad_mode") == "reverse" and not params.get("no_stde"):
+            continue
         yield params
 
 
