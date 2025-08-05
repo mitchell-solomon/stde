@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 import numpy as np
 
@@ -85,7 +85,7 @@ parser.add_argument(
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--eval_every", type=int, default=5000)
 parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--lr_decay", type=str, default="piecewise", choices=["none", "piecewise", "cosine", "linear", "exponential"])
+parser.add_argument("--lr_decay", type=str, default="exponential", choices=["none", "piecewise", "cosine", "linear", "exponential"])
 parser.add_argument("--gamma", type=float, default=0.9995)
 parser.add_argument("--optimizer", type=str, default="adamw", choices=["adam", "adamw", "sgd", "rmsprop"])
 parser.add_argument("--n_fgd_vec", type=int, default=0)
@@ -204,8 +204,10 @@ if args.no_stde:
         args.hess_diag_method = "stacked"
 
 # derive rand_batch_size from dimension (order of magnitude lower)
-rand_batch_size = max(1, args.spatial_dim // 10)
+# rand_batch_size = max(1, args.spatial_dim // 10)
+rand_batch_size = 16
 args.rand_batch_size = rand_batch_size
+
 
 
 # ---------------------------------------------------------------------------

@@ -66,15 +66,15 @@ def main():
         ],
         help="equation names to run",
     )
-    parser.add_argument("--seeds", type=int, default=5, help="number of seeds")
+    parser.add_argument("--seeds", type=int, default=1, help="number of seeds")
     parser.add_argument("--epochs", type=int, default=10000)
     parser.add_argument("--eval_every", type=int, default=50000000)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--n_test", type=int, default=2000)
     parser.add_argument("--test_batch_size", type=int, default=50)
-    parser.add_argument("--seq_len", type=int, default=5)
+    parser.add_argument("--seq_len", type=int, default=8)
     parser.add_argument("--use_seed_seq", type=bool, default=True)
-    parser.add_argument("--seed_frac", type=float, default=0.001)
+    parser.add_argument("--seed_frac", type=float, default=0.01)
     parser.add_argument(
         "--results_dir",
         type=Path,
@@ -118,12 +118,12 @@ def main():
             param_str = "_".join(f"{k}{v}" for k, v in params.items())
             for seed in range(args.seeds):
                 for eqn_name in args.benchmarks:
-                    run_dir = args.results_dir / backbone / param_str / eqn_name / str(seed)
+                    run_dir = args.results_dir / backbone / eqn_name / param_str / str(seed)
                     final_path = run_dir / "final_eval_results.json"
                     if final_path.exists() and not args.overwrite:
                         print(f"Skipping {run_dir} (already exists)")
                         continue
-
+                    print(f"Running {run_dir}")
                     run_name = f"{backbone}/{param_str}/{eqn_name}/{seed}"
                     dim = default_dim(eqn_name)
                     cmd = [
@@ -150,7 +150,7 @@ def main():
                             continue  # already included
                         else:
                             cmd.extend([f"--{k}", str(v)])
-                    print("Running:", " ".join(cmd))
+                    # print("Running:", " ".join(cmd))
                     subprocess.run(cmd, check=True)
 
 

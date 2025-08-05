@@ -21,7 +21,7 @@ def get_sdgd_idx_set(cfg: EqnConfig, *, key: jax.Array) -> Array:
   """Return a set of randomly chosen dimension indices."""
   if cfg.rand_batch_size != 0:
     idx_set = jax.random.choice(
-      key, cfg.dim, shape=(cfg.rand_batch_size,), replace=False
+      key, cfg.dim, shape=(cfg.rand_batch_size,), replace=True
     )
   else:
     idx_set = jnp.arange(cfg.dim)
