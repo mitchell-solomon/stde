@@ -16,18 +16,18 @@ MLP_SWEEP = {
     "block_size": [32, 64],
     "activation": ["tanh", "gelu"],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
-    "no_stde": [False, True],              # --no_stde (store_true)
+    "no_stde": [False, True],           # --no_stde (store_true)
 }
 
 MAMBA_SWEEP = {
     "num_mamba_blocks": [1, 2],
-    "hidden_features": [8, 64],
+    "hidden_features": [8, 16],
     "expansion_factor": [2.0],
     "dt_rank": ["auto"],
-    "activation": ["tanh"],
+    "activation": ["tanh", "gelu", "wave", "relu"],
     "bidirectional": [True, False],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
-    "no_stde": [False, True],              # --no_stde (store_true)
+    "no_stde": [False, True],           # --no_stde (store_true)
 }
 
 
@@ -48,17 +48,17 @@ def iter_sweep(backbone: str):
         yield params
 
 
-
-
+def main():
     parser = argparse.ArgumentParser(description="Run backbone hyperparameter sweeps or ablation variants")
     parser.add_argument(
         "--benchmarks",
         nargs="+",
         default=[
-            "Poisson",
-            "Wave",
+            # "Poisson",
+            "SineGordonTwobody",
+            # "Wave",
             # "Burgers",
-            "KdV2d",
+            # "KdV2d",
             # "PoissonHouman",
             # "SineGordonTime",
             # "AllenCahnTime",
@@ -69,66 +69,12 @@ def iter_sweep(backbone: str):
     parser.add_argument("--seeds", type=int, default=5, help="number of seeds")
     parser.add_argument("--epochs", type=int, default=10000)
     parser.add_argument("--eval_every", type=int, default=50000000)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--n_test", type=int, default=2000)
     parser.add_argument("--test_batch_size", type=int, default=50)
     parser.add_argument("--seq_len", type=int, default=5)
     parser.add_argument("--use_seed_seq", type=bool, default=True)
-    parser.add_argument("--seed_frac", type=float, default=0.01)
-    parser.add_argument(
-        "--results_dir",
-        type=Path,
-        default=Path("_results"),
-        help="base directory to store results",
-    )
-    parser.add_argument("--overwrite", action="store_true", help="rerun if results exist")
-    args, unknown = parser.parse_known_args()
-
-    common_args = [
-        "--epochs",
-        str(args.epochs),
-        "--eval_every",
-        str(args.eval_every),
-        "--lr",
-        str(args.lr),
-        "--N_test",
-        str(args.n_test),
-        "--test_batch_size",
-        str(args.test_batch_size),
-        "--seq_len",
-        str(args.seq_len),
-        "--use_seed_seq",
-        str(args.use_seed_seq).lower(),
-        "--seed_frac",
-        str(args.seed_frac),
-    ] + unknown
-
-def main():
-    parser = argparse.ArgumentParser(description="Run backbone hyperparameter sweeps or ablation variants")
-    parser.add_argument(
-        "--benchmarks",
-        nargs="+",
-        default=[
-            "Poisson",
-            "Wave",
-            "Burgers",
-            "KdV2d",
-            # "PoissonHouman",
-            "SineGordonTime",
-            "AllenCahnTime",
-            "SemilinearHeatTime",
-        ],
-        help="equation names to run",
-    )
-    parser.add_argument("--seeds", type=int, default=5, help="number of seeds")
-    parser.add_argument("--epochs", type=int, default=10000)
-    parser.add_argument("--eval_every", type=int, default=50000000)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--n_test", type=int, default=2000)
-    parser.add_argument("--test_batch_size", type=int, default=50)
-    parser.add_argument("--seq_len", type=int, default=5)
-    parser.add_argument("--use_seed_seq", type=bool, default=True)
-    parser.add_argument("--seed_frac", type=float, default=0.01)
+    parser.add_argument("--seed_frac", type=float, default=0.001)
     parser.add_argument(
         "--results_dir",
         type=Path,
