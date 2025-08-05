@@ -274,12 +274,37 @@ def test_scan_functions():
     chunked_time = time.time() - start_time
     
     # Convert to numpy for plotting
+    def visualize_nans(name, arr):
+        """Report and visualize NaN locations for an array."""
+        nan_mask = np.isnan(arr)
+        if nan_mask.any():
+            # Show where NaNs occur and generate a heatmap (batch x sequence)
+            locations = np.argwhere(nan_mask)
+            print(f"{name} produced NaNs at indices (batch, seq, channel): {locations[:10]}")
+            print(f"Total NaNs: {nan_mask.sum()} / {arr.size}")
+            plt.figure(figsize=(6, 3))
+            sns.heatmap(nan_mask.any(axis=-1), cbar=False)
+            plt.title(f'NaN mask for {name}')
+            plt.xlabel('Sequence Position')
+            plt.ylabel('Batch')
+            plt.savefig(f'{name}_nan_mask.png', dpi=300)
+            plt.close()
+        return nan_mask
+
     y_parallel_np = np.array(y_parallel)
+    visualize_nans('parallel_scan', y_parallel_np)
     assert not np.isnan(y_parallel_np).any(), "NaN values found in parallel scan output"
     y_recursive_np = np.array(y_recursive)
+    visualize_nans('recursive_scan', y_recursive_np)
     assert not np.isnan(y_recursive_np).any(), "NaN values found in recursive scan output"
     y_chunked_np = np.array(y_chunked)
+    visualize_nans('chunked_scan', y_chunked_np)
     assert not np.isnan(y_chunked_np).any(), "NaN values found in chunked scan output"
+
+    # When jax_enable_x64 is disabled, NaNs often appear toward the end of the
+    # sequence where the cumulative product of α underflows to zero, leading to
+    # divisions by zero in the scan. Remedies include using 64‑bit precision,
+    # performing the scan in log‑space, or rescaling/clipping the exponential terms.
     
     # Calculate differences
     diff_parallel_recursive = np.abs(y_parallel_np - y_recursive_np)
