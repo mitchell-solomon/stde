@@ -794,11 +794,11 @@ def main():
     # plt.show()
 
     # --- Final evaluation on the full test set ---
-    best_params_path = os.path.join(save_dir, "params_lowest_loss.pkl")
-    if os.path.exists(best_params_path):
-        with open(best_params_path, "rb") as f:
-            best_params = pickle.load(f)
-        state = state.replace(params=best_params)
+    params_path = os.path.join(save_dir, "params_final.pkl")
+    if os.path.exists(params_path):
+        with open(params_path, "rb") as f:
+            final_params = pickle.load(f)
+        state = state.replace(params=final_params)
     print("\n=== Final evaluation on test set ===")
     l1_rel, l2_rel = eval_model(
         model,
