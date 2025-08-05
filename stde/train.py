@@ -735,10 +735,15 @@ def main():
     iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
     epoch_times = []
     start_time = time.time()
+    nan_loss = False
     for step in iters:
         step_start = time.time()
         state, train_loss, grads = train_step(state)
         train_loss_f = float(train_loss)
+        if np.isnan(train_loss_f):
+            logger.error(f"NaN loss encountered at step {step}. Ending training early.")
+            nan_loss = True
+            break
         losses.append(train_loss_f)
         is_best = False
         if train_loss_f < best_loss:
@@ -772,6 +777,9 @@ def main():
             gpu_mems.append(peak_mem)
 
         epoch_times.append(time.time() - step_start)
+
+    if nan_loss:
+        return
 
     # read iter/s from log file
     try:
