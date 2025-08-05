@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, Float
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 import numpy as np
 
@@ -85,7 +85,7 @@ parser.add_argument(
 parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--eval_every", type=int, default=5000)
 parser.add_argument("--lr", type=float, default=1e-3)
-parser.add_argument("--lr_decay", type=str, default="piecewise", choices=["none", "piecewise", "cosine", "linear", "exponential"])
+parser.add_argument("--lr_decay", type=str, default="exponential", choices=["none", "piecewise", "cosine", "linear", "exponential"])
 parser.add_argument("--gamma", type=float, default=0.9995)
 parser.add_argument("--optimizer", type=str, default="adamw", choices=["adam", "adamw", "sgd", "rmsprop"])
 parser.add_argument("--n_fgd_vec", type=int, default=0)
@@ -204,8 +204,10 @@ if args.no_stde:
         args.hess_diag_method = "stacked"
 
 # derive rand_batch_size from dimension (order of magnitude lower)
-rand_batch_size = max(1, args.spatial_dim // 10)
+# rand_batch_size = max(1, args.spatial_dim // 10)
+rand_batch_size = 16
 args.rand_batch_size = rand_batch_size
+
 
 
 # ---------------------------------------------------------------------------
@@ -735,10 +737,15 @@ def main():
     iters = tqdm(range(args.epochs), desc=f"training eqn {args.eqn_name}\n")
     epoch_times = []
     start_time = time.time()
+    nan_loss = False
     for step in iters:
         step_start = time.time()
         state, train_loss, grads = train_step(state)
         train_loss_f = float(train_loss)
+        if np.isnan(train_loss_f):
+            logger.error(f"NaN loss encountered at step {step}. Ending training early.")
+            nan_loss = True
+            break
         losses.append(train_loss_f)
         is_best = False
         if train_loss_f < best_loss:
@@ -773,6 +780,9 @@ def main():
 
         epoch_times.append(time.time() - step_start)
 
+    if nan_loss:
+        return
+
     # read iter/s from log file
     try:
         with open(log_file, "r") as f:
@@ -794,11 +804,11 @@ def main():
     # plt.show()
 
     # --- Final evaluation on the full test set ---
-    best_params_path = os.path.join(save_dir, "params_lowest_loss.pkl")
-    if os.path.exists(best_params_path):
-        with open(best_params_path, "rb") as f:
-            best_params = pickle.load(f)
-        state = state.replace(params=best_params)
+    params_path = os.path.join(save_dir, "params_final.pkl")
+    if os.path.exists(params_path):
+        with open(params_path, "rb") as f:
+            final_params = pickle.load(f)
+        state = state.replace(params=final_params)
     print("\n=== Final evaluation on test set ===")
     l1_rel, l2_rel = eval_model(
         model,

@@ -51,7 +51,6 @@ def generate_for_equation(eqn_name: str, seeds: int = 5, data_dir: Path = Path("
         return
 
     dim = default_dim(eqn_name)
-
     spatial_dim = dim
     N_test, test_batch_size = 2000, 20
     N_val, val_batch_size = 200, 20

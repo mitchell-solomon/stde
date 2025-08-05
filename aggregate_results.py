@@ -160,11 +160,11 @@ if __name__ == "__main__":
     df.to_csv(out_dir / "aggregate_results.csv", index=False)
     summary.to_csv(out_dir / "summary.csv", index=False)
 
-    ttest_df = paired_ttests(df, args.baseline, args.metrics)
-    if not ttest_df.empty:
-        print(f"\n## Paired t-tests vs {args.baseline}")
-        print(markdown_table(ttest_df))
-        ttest_df.to_csv(out_dir / "paired_ttests.csv", index=False)
+    # ttest_df = paired_ttests(df, args.baseline, args.metrics)
+    # if not ttest_df.empty:
+    #     print(f"\n## Paired t-tests vs {args.baseline}")
+    #     print(markdown_table(ttest_df))
+    #     ttest_df.to_csv(out_dir / "paired_ttests.csv", index=False)
 
     if args.plot:
         xcol, ycol = args.metrics[0], args.metrics[1] if len(args.metrics) > 1 else args.metrics[0]
