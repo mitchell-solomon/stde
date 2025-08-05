@@ -19,6 +19,7 @@ from typing import get_args
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from tqdm import tqdm
 
 from stde.config import EqnConfig
@@ -50,9 +51,6 @@ def generate_for_equation(eqn_name: str, seeds: int = 5, data_dir: Path = Path("
         return
 
     dim = default_dim(eqn_name)
-    eqn_cfg = EqnConfig(name=eqn_name, dim=dim)
-    sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
-
     spatial_dim = dim
     N_test, test_batch_size = 2000, 20
     N_val, val_batch_size = 200, 20
@@ -60,19 +58,25 @@ def generate_for_equation(eqn_name: str, seeds: int = 5, data_dir: Path = Path("
     use_seed_seq = True
     seed_frac = 0.01
 
-    if eqn.time_dependent:
-        def sol_fn(xt):
-            x_part = xt[..., :spatial_dim]
-            t_part = xt[..., spatial_dim:]
-            return eqn.sol(x_part, t_part, eqn_cfg)
-    else:
-        def sol_fn(x):
-            return eqn.sol(x, None, eqn_cfg)
-
     n_test_batches = N_test // test_batch_size
     n_val_batches = N_val // val_batch_size
 
     for seed in range(seeds):
+        eqn_cfg = EqnConfig(name=eqn_name, dim=dim)
+        if eqn.random_coeff:
+            coeff_rng = np.random.default_rng(seed)
+            eqn_cfg.coeffs = coeff_rng.standard_normal((1, dim))
+        sample_domain_fn = eqn.get_sample_domain_fn(eqn_cfg)
+
+        if eqn.time_dependent:
+            def sol_fn(xt):
+                x_part = xt[..., :spatial_dim]
+                t_part = xt[..., spatial_dim:]
+                return eqn.sol(x_part, t_part, eqn_cfg)
+        else:
+            def sol_fn(x):
+                return eqn.sol(x, None, eqn_cfg)
+
         # compute domain span for seed-based sequence sampling
         span_rng = jax.random.PRNGKey(seed + 1)
         x_tmp, t_tmp, _xb, _tb, _ = sample_domain_fn(1024, 8, span_rng)
