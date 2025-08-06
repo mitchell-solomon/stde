@@ -104,7 +104,7 @@ def largest_factor_up_to(b,n):
 
 
 @jit
-def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
+def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta, clip: float | None = 1e-8):
     """
     x:      (B, L, D)
     Acoeff: (D, N)
@@ -117,11 +117,16 @@ def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
     # 1) compute α and β directly in batch‑major shape
     #    α, β: (B, L, D, N)
     α = jnp.exp(jnp.einsum('dn,bld->bldn', Acoeff, Delta))
+    if clip is not None:
+        α = jnp.clip(α, clip, None)
     β = jnp.einsum('bln,bld,bld->bldn', Bcoeff, x, Delta)
 
     # 2) prefix‐product along the time axis (axis=1)
     P    = jnp.cumprod(α, axis=1)         # (B, L, D, N)
-    invP = 1.0 / P                        # (B, L, D, N)
+    invP = jnp.reciprocal(
+        jnp.clip(P, a_min=clip if clip is not None else jnp.finfo(α.dtype).tiny)
+    )
+                        # (B, L, D, N)
 
     # 3) weighted prefix‐sum of β/g
     S    = jnp.cumsum(β * invP, axis=1)   # (B, L, D, N)

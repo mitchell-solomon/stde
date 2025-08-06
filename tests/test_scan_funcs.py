@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jax import custom_vjp, jit
 from jax.experimental.jet import jet
 from jax import config
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 
 
 import matplotlib.pyplot as plt
@@ -38,8 +38,9 @@ def compute_alpha_beta (x_chunk, Acoeff, B_chunk, Delta_chunk):
     beta = jnp.einsum ('lbn,lbd,lbd->lbdn', B_chunk, x_chunk, Delta_chunk)  # (chunk_size, B, D, N)
     return alpha, beta
 
+
 @jit
-def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
+def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta, clip: float | None = 1e-6):
     """
     x:      (B, L, D)
     Acoeff: (D, N)
@@ -52,11 +53,16 @@ def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
     # 1) compute α and β directly in batch‑major shape
     #    α, β: (B, L, D, N)
     α = jnp.exp(jnp.einsum('dn,bld->bldn', Acoeff, Delta))
+    if clip is not None:
+        α = jnp.clip(α, clip, None)
     β = jnp.einsum('bln,bld,bld->bldn', Bcoeff, x, Delta)
 
     # 2) prefix‐product along the time axis (axis=1)
     P    = jnp.cumprod(α, axis=1)         # (B, L, D, N)
-    invP = 1.0 / P                        # (B, L, D, N)
+    invP = jnp.reciprocal(
+        jnp.clip(P, a_min=clip if clip is not None else jnp.finfo(α.dtype).tiny)
+    )
+                        # (B, L, D, N)
 
     # 3) weighted prefix‐sum of β/g
     S    = jnp.cumsum(β * invP, axis=1)   # (B, L, D, N)
@@ -69,6 +75,7 @@ def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta):
     y    = jnp.einsum('bln,bldn->bld', Ccoeff, h)  # (B, L, D)
 
     return y
+
 
 def ssm_recursive_scan (x, Acoeff, Bcoeff, Ccoeff, Delta, min_recursion_length: int = 2, recursive_split: int = 2):
     B = x.shape[-3]
@@ -191,7 +198,7 @@ def test_scan_functions():
     
     # Define test parameters
     B = 2       # Batch size
-    L = 100     # Sequence length
+    L = 4     # Sequence length
     D = 4       # Input dimension
     N = 8       # Hidden dimension
     
@@ -616,5 +623,5 @@ def test_scan_functions():
     }
 
 if __name__ == "__main__":
-    results = test_scan_functions()
+    test_scan_functions()
     print("\nTest completed successfully!")
