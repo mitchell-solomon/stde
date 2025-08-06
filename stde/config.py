@@ -160,7 +160,7 @@ class TestConfig:
   """whether to print stats using tqdm. Turn this off for speed test."""
   save_every: int = 10000
   """save every X epochs"""
-  data_on_gpu: bool = True
+  data_on_gpu: bool = False
   """if true, store test data on GPU RAM"""
 
 
