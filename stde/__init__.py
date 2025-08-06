@@ -1,4 +1,4 @@
-from . import config, equations, model, operators, types, mlp
+from . import config, equations, model, operators, types, mlp, metrics
 
 
 __all__ = [
@@ -6,6 +6,7 @@ __all__ = [
   "equations",
   "model",
   "mlp",
+  "metrics",
   "operators",
   "train",
   "types",
