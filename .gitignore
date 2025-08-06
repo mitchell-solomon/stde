@@ -1,6 +1,8 @@
 *.pyc
+*.png
+*.csv
 /stde.egg-info/
 /pde_solution_plots/
-my_learning
-_results
-data
+/my_learning
+/_results
+/data
