@@ -662,8 +662,8 @@ def main():
     # prepare test and validation sets (once)
     test_seqs = test_truths = None
     val_seqs = val_truths = None
+    n_test_batches = args.N_test // args.test_batch_size
     if not eqn.is_traj:
-        n_test_batches = args.N_test // args.test_batch_size
         test_seqs = []
         test_truths = []
 
@@ -717,6 +717,19 @@ def main():
         y_true_l2 = float(jnp.linalg.norm(y_true_all))
         y_val_l2 = float(jnp.linalg.norm(y_val_all))
     else:
+        # generate sequences for plotting even without ground truth
+        test_seqs = []
+        for _ in tqdm(range(n_test_batches)):
+            rng_test, sample_rng = jax.random.split(rng_test)
+            x_test_seq, _ = sample_domain_seq_fn(
+                batch_size=args.test_batch_size,
+                rng=sample_rng,
+                seq_len=args.seq_len,
+                use_seed=args.use_seed_seq,
+            )
+            test_seqs.append(x_test_seq)
+        test_seqs = jnp.stack(test_seqs)
+
         # reference value only defined at x=0,t=0
         y_ref = eqn.sol(jnp.zeros((args.spatial_dim,)), jnp.zeros((1,)), eqn_cfg)
         y_true_l1 = jnp.abs(y_ref)
@@ -866,42 +879,53 @@ def main():
                       dim: int | None = None,
                       cmap: str = 'viridis',
                       eqn_name: str = args.eqn_name):
-        """Plot true, predicted and diff solution with PDE meta info."""
+        """Plot predicted solution with optional ground truth."""
 
-        diff = u_pred - u_true
+        has_truth = u_true is not None
+        diff = u_pred - u_true if has_truth else None
 
         if eqn.time_dependent or eqn.is_traj:
             xi = np.array(x_flat[:, 0])
             yi = np.array(x_flat[:, -1])
             xlabel, ylabel = 'x', 't'
 
-            vmin = min(np.min(u_true), np.min(u_pred))
-            vmax = max(np.max(u_true), np.max(u_pred))
-            # For diff, use symmetric colorbar spanning the superset range
-            diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
-            diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
+            vmin = (min(np.min(u_true), np.min(u_pred))
+                    if has_truth else np.min(u_pred))
+            vmax = (max(np.max(u_true), np.max(u_pred))
+                    if has_truth else np.max(u_pred))
 
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
-                                  vmin=vmin, vmax=vmax, s=20)
-            axes[0].set_title('True u')
-            axes[0].set_xlabel(xlabel)
-            axes[0].set_ylabel(ylabel)
+            if has_truth:
+                diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
+                diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
+                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
+                                      vmin=vmin, vmax=vmax, s=20)
+                axes[0].set_title('True u')
+                axes[0].set_xlabel(xlabel)
+                axes[0].set_ylabel(ylabel)
 
-            sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
-                                  vmin=vmin, vmax=vmax, s=20)
-            axes[1].set_title('Predicted u')
-            axes[1].set_xlabel(xlabel)
-            axes[1].set_ylabel(ylabel)
+                sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
+                                      vmin=vmin, vmax=vmax, s=20)
+                axes[1].set_title('Predicted u')
+                axes[1].set_xlabel(xlabel)
+                axes[1].set_ylabel(ylabel)
 
-            sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
-                                 vmin=diff_vmin, vmax=diff_vmax)
-            axes[2].set_title('Difference')
-            axes[2].set_xlabel(xlabel)
-            axes[2].set_ylabel(ylabel)
+                sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
+                                     vmin=diff_vmin, vmax=diff_vmax)
+                axes[2].set_title('Difference')
+                axes[2].set_xlabel(xlabel)
+                axes[2].set_ylabel(ylabel)
 
-            fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
-            fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
+                fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
+                fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
+            else:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+                sc1 = ax.scatter(xi, yi, c=u_pred, cmap=cmap,
+                                 vmin=vmin, vmax=vmax, s=20)
+                ax.set_title('Predicted u')
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel)
+                fig.colorbar(sc1, ax=ax, shrink=0.8, pad=0.02, label='u')
 
         else:
             if dim is None:
@@ -915,54 +939,73 @@ def main():
 
             if D == 1:
                 x = x_flat if x_flat.ndim == 1 else x_flat[:, 0]
-                fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-                axes[0].plot(x, u_true, '.', label='true')
-                axes[0].set_title('True u(x)')
-                axes[0].set_xlabel('x')
-                axes[0].set_ylabel('u')
+                if has_truth:
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+                    axes[0].plot(x, u_true, '.', label='true')
+                    axes[0].set_title('True u(x)')
+                    axes[0].set_xlabel('x')
+                    axes[0].set_ylabel('u')
 
-                axes[1].plot(x, u_pred, '.', color='C1')
-                axes[1].set_title('Predicted u(x)')
-                axes[1].set_xlabel('x')
-                axes[1].set_ylabel('u')
+                    axes[1].plot(x, u_pred, '.', color='C1')
+                    axes[1].set_title('Predicted u(x)')
+                    axes[1].set_xlabel('x')
+                    axes[1].set_ylabel('u')
 
-                axes[2].plot(x, diff, '.', color='C2')
-                axes[2].set_title('Difference')
-                axes[2].set_xlabel('x')
-                axes[2].set_ylabel('Δu')
+                    axes[2].plot(x, diff, '.', color='C2')
+                    axes[2].set_title('Difference')
+                    axes[2].set_xlabel('x')
+                    axes[2].set_ylabel('Δu')
+                else:
+                    fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+                    ax.plot(x, u_pred, '.', color='C1')
+                    ax.set_title('Predicted u(x)')
+                    ax.set_xlabel('x')
+                    ax.set_ylabel('u')
 
             elif D == 2:
                 xi = x_flat[:, 0]
                 yi = x_flat[:, 1]
 
-                vmin = min(np.min(u_true), np.min(u_pred))
-                vmax = max(np.max(u_true), np.max(u_pred))
-                diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
-                diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
+                vmin = (min(np.min(u_true), np.min(u_pred))
+                        if has_truth else np.min(u_pred))
+                vmax = (max(np.max(u_true), np.max(u_pred))
+                        if has_truth else np.max(u_pred))
 
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5),
-                                       subplot_kw={'aspect': 'equal'})
+                if has_truth:
+                    diff_abs_max = max(abs(vmin), abs(vmax), np.max(np.abs(diff)))
+                    diff_vmin, diff_vmax = -diff_abs_max, diff_abs_max
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5),
+                                           subplot_kw={'aspect': 'equal'})
 
-                sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
-                                      vmin=vmin, vmax=vmax, s=20)
-                axes[0].set_title('True u')
-                axes[0].set_xlabel('dim0')
-                axes[0].set_ylabel('dim1')
+                    sc0 = axes[0].scatter(xi, yi, c=u_true, cmap=cmap,
+                                          vmin=vmin, vmax=vmax, s=20)
+                    axes[0].set_title('True u')
+                    axes[0].set_xlabel('dim0')
+                    axes[0].set_ylabel('dim1')
 
-                sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
-                                      vmin=vmin, vmax=vmax, s=20)
-                axes[1].set_title('Predicted u')
-                axes[1].set_xlabel('dim0')
-                axes[1].set_ylabel('dim1')
+                    sc1 = axes[1].scatter(xi, yi, c=u_pred, cmap=cmap,
+                                          vmin=vmin, vmax=vmax, s=20)
+                    axes[1].set_title('Predicted u')
+                    axes[1].set_xlabel('dim0')
+                    axes[1].set_ylabel('dim1')
 
-                sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
-                                     vmin=diff_vmin, vmax=diff_vmax)
-                axes[2].set_title('Difference')
-                axes[2].set_xlabel('dim0')
-                axes[2].set_ylabel('dim1')
+                    sc2 = axes[2].scatter(xi, yi, c=diff, cmap='coolwarm', s=20,
+                                         vmin=diff_vmin, vmax=diff_vmax)
+                    axes[2].set_title('Difference')
+                    axes[2].set_xlabel('dim0')
+                    axes[2].set_ylabel('dim1')
 
-                fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
-                fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
+                    fig.colorbar(sc0, ax=axes[:2], shrink=0.8, pad=0.02, label='u')
+                    fig.colorbar(sc2, ax=axes[2], shrink=0.8, pad=0.02, label='Δu')
+                else:
+                    fig, ax = plt.subplots(1, 1, figsize=(5, 5),
+                                           subplot_kw={'aspect': 'equal'})
+                    sc1 = ax.scatter(xi, yi, c=u_pred, cmap=cmap,
+                                     vmin=vmin, vmax=vmax, s=20)
+                    ax.set_title('Predicted u')
+                    ax.set_xlabel('dim0')
+                    ax.set_ylabel('dim1')
+                    fig.colorbar(sc1, ax=ax, shrink=0.8, pad=0.02, label='u')
 
             else:
                 raise ValueError('plot only supports 1D or 2D embeddings for visualization')
@@ -974,10 +1017,10 @@ def main():
                            eqn_name: str = args.eqn_name):
         """
         Run the model over every test batch, flatten, and plot true vs. predicted.
-        
+
         Args:
         test_seqs:   array (n_batches, B, L, D)
-        test_truths: array (n_batches, B, L)
+        test_truths: array (n_batches, B, L) or None
         params:      your trained params to pass into model.apply
         model:       your model instance
         dim:         spatial dimension (if None, inferred from D)
@@ -992,16 +1035,17 @@ def main():
         # run model in one go
         u_pred_seq = model.apply({"params": params},
                                 seqs_flat)      # → (n_batches*B, L, 1) or (nB, L)
-        
+
         # flatten spatial points and truths
         x_flat = test_seqs.reshape((n_batches * B * L, D))
-        u_true = test_truths.reshape((n_batches * B * L,))
         u_pred = u_pred_seq.reshape((n_batches * B * L,))
+        u_true = (test_truths.reshape((n_batches * B * L,))
+                  if test_truths is not None else None)
 
         # convert to NumPy for plotting
         x_flat_np = np.array(x_flat)
-        u_true_np  = np.array(u_true)
         u_pred_np  = np.array(u_pred)
+        u_true_np  = np.array(u_true) if u_true is not None else None
 
         # now call the existing plot fn
         plot_solution(x_flat_np,
@@ -1011,7 +1055,7 @@ def main():
                       cmap=cmap,
                       eqn_name=eqn_name)
 
-    if not eqn.is_traj:
+    if test_seqs is not None:
         plot_all_solutions(test_seqs,
                            test_truths,
                            state.params,
@@ -1057,9 +1101,11 @@ def main():
         plt.ylabel("x₁")
         plt.tight_layout()
         plt.savefig(f"{save_dir}/sequences_{x_ordering}.png", dpi=300)
-    if not eqn.is_traj:
+    if test_seqs is not None:
         seq_vis = test_seqs[0]
-        if seq_vis.shape[-1] > 2:
+        if eqn.time_dependent or eqn.is_traj:
+            seq_vis = seq_vis[..., [0, -1]]
+        elif seq_vis.shape[-1] > 2:
             seq_vis = seq_vis[..., :2]
         visualize_sequences(seq_vis, x_ordering=args.x_ordering)
 
