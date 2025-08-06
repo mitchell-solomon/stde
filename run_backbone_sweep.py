@@ -22,9 +22,9 @@ MLP_SWEEP = {
 MAMBA_SWEEP = {
     "num_mamba_blocks": [1, 2],
     "hidden_features": [8, 16],
-    "expansion_factor": [2.0],
+    "expansion_factor": [1.0],
     "dt_rank": ["auto"],
-    "activation": ["tanh", "gelu", "wave"],
+    "activation": ["tanh", "wave", "gelu"],
     "bidirectional": [True, False],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
     "no_stde": [False, True],           # --no_stde (store_true)
@@ -67,22 +67,22 @@ def main():
             # "Wave",
             # "Burgers",
             # "KdV2d",
-            "PoissonHouman",
-            # "SineGordonTime",
-            # "AllenCahnTime",
-            # "SemilinearHeatTime",
+            # "PoissonHouman",
+            "SineGordonTime",
+            "AllenCahnTime",
+            "SemilinearHeatTime",
         ],
         help="equation names to run",
     )
     parser.add_argument("--seeds", type=int, default=1, help="number of seeds")
     parser.add_argument("--epochs", type=int, default=10000)
     parser.add_argument("--eval_every", type=int, default=50000000)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--n_test", type=int, default=2000)
     parser.add_argument("--test_batch_size", type=int, default=100)
     parser.add_argument("--seq_len", type=int, default=4)
     parser.add_argument("--use_seed_seq", type=bool, default=True)
-    parser.add_argument("--seed_frac", type=float, default=0.05)
+    parser.add_argument("--seed_frac", type=float, default=0.01)
     parser.add_argument(
         "--results_dir",
         type=Path,
