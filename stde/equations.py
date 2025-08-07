@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental import jet
 from jaxtyping import Array, Float
+import os
 
 from stde import types
 from stde.config import EqnConfig
@@ -1337,7 +1338,7 @@ def KdV2d_res(
     t = yt[1]
     return u(jnp.concatenate([x, y], axis=-1), t)
 
-  case = 4
+  case = int(os.getenv("KDV2D_CASE", "4"))
   if case == 1:
     # grad + 3-jet
     u_y_fn = jax.grad(u_, argnums=1)
@@ -1508,7 +1509,7 @@ def highord1d_res(
     t = xt[cfg.dim:]
     return u(x, t)
 
-  case = 4
+  case = int(os.getenv("HIGHORD1D_CASE", "4"))
   if case == 1:
     # grad only
     u_x_fn = jax.grad(u, argnums=0)
@@ -1595,7 +1596,7 @@ def highord1d_res(
     u_tt = jet.jet(u_xt, (xt,), [(jnp.eye(2)[1], jnp.zeros(2))])[1][1]
 
   lam1, lam2 = 1e-3, 1
-  eq = 2
+  eq = int(os.getenv("HIGHORD1D_EQ", "2"))
   if eq == 1:  # 1D SG
     res = u_xt + jnp.sin(u_)
   elif eq == 2:  # KdV with gPINN loss
