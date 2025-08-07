@@ -44,8 +44,13 @@ To enable weight sharing described in Appendix G and I.3, add the `--config.mode
 ## High-order PDEs
 To run the high-order low-dimensional PDEs described in Appendix I.4.1, change the '--config.eqn_cfg.name' flag accordingly. For example, to run the Gradient-enhanced 1D Korteweg-de Vries (g-KdV) equation:
 ``` shell
-./scripts/insep.sh --config.eqn_cfg.rand_batch_size 0 --config.eqn_cfg.hess_diag_method sparse_stde --config.eqn_cfg.dim 1 --config.eqn_cfg.name highord1d 
+./scripts/insep.sh --config.eqn_cfg.rand_batch_size 0 --config.eqn_cfg.hess_diag_method sparse_stde --config.eqn_cfg.dim 1 --config.eqn_cfg.name highord1d
 ```
+To sweep over all low-dimensional high-order benchmarks and variants run:
+``` shell
+./scripts/run_lowD_highord.sh
+```
+This script iterates over `KdV2d` and the `highord1d` variants (sine-Gordon, gKdV, gKdV‑high), exporting the required environment variables and logging outputs under `logs/`.
 To run the amortized gradient-enhanced PINN described in Appendix I.4.2, change the '--config.eqn_cfg.name' flag accordingly. For example, to run two-body Allen-Cahn equation with amoritzed gPINN:
 ``` shell
 ./scripts/insep.sh --config.eqn_cfg.rand_batch_size 16 --config.eqn_cfg.hess_diag_method sparse_stde --config.eqn_cfg.dim 100000 --config.eqn_cfg.name AllenCahnTwobodyG --config.eqn_cfg.gpinn_weight 0.1
