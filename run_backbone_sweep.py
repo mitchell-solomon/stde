@@ -84,6 +84,12 @@ def main():
     parser.add_argument("--use_seed_seq", type=bool, default=True)
     parser.add_argument("--seed_frac", type=float, default=0.01)
     parser.add_argument(
+        "--spatial_dim",
+        type=int,
+        default=None,
+        help="override default spatial dimension for all equations",
+    )
+    parser.add_argument(
         "--results_dir",
         type=Path,
         default=Path("_results"),
@@ -133,7 +139,7 @@ def main():
                         continue
                     print(f"Running {run_dir}")
                     run_name = f"{backbone}/{eqn_name}/{param_str}/{seed}"
-                    dim = default_dim(eqn_name)
+                    dim = args.spatial_dim if args.spatial_dim is not None else default_dim(eqn_name)
                     cmd = [
                         "python",
                         "-m",
