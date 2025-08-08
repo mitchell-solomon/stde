@@ -11,21 +11,20 @@ import stde.equations as eqns
 
 # Hyperparameter sweep spaces, now including ad_mode and no_stde
 MLP_SWEEP = {
-    "mlp_depth": [1, 2],
-    "mlp_width": [4, 64],
-    "block_size": [32, 64],
-    "activation": ["tanh", "gelu"],
+    "mlp_depth": [5],
+    "mlp_width": [512],
+    "activation": ["tanh"],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
     "no_stde": [False, True],           # --no_stde (store_true)
 }
 
 MAMBA_SWEEP = {
-    "num_mamba_blocks": [1, 2],
-    "hidden_features": [8, 16],
-    "expansion_factor": [1.0],
+    "num_mamba_blocks": [5],
+    "hidden_features": [32],
+    "expansion_factor": [4.0],
     "dt_rank": ["auto"],
-    "activation": ["tanh", "wave", "gelu"],
-    "bidirectional": [True, False],
+    "activation": ["tanh"],
+    "bidirectional": [False],
     "ad_mode": ["reverse", "forward"],  # --ad_mode
     "no_stde": [False, True],           # --no_stde (store_true)
 }
@@ -67,10 +66,11 @@ def main():
             # "Wave",
             # "Burgers",
             # "KdV2d",
+            "highord1d",
             # "PoissonHouman",
-            "SineGordonTime",
-            "AllenCahnTime",
-            "SemilinearHeatTime",
+            # "SineGordonTime",
+            # "AllenCahnTime",
+            # "SemilinearHeatTime",
         ],
         help="equation names to run",
     )

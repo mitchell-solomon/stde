@@ -68,7 +68,7 @@ def main():
     parser.add_argument(
         "--benchmarks",
         nargs="+",
-        default=["KdV2d", "highord1d"],
+        default=["highord1d"], #KdV2d
         help="equation names to run",
     )
     parser.add_argument("--seeds", type=int, default=1, help="number of seeds")
@@ -121,7 +121,7 @@ def main():
         "no_stde",
     }
 
-    for backbone in ["Mamba"]:  # "MLP" could be added if desired
+    for backbone in ["MLP"]:  # "Mamba" could be added if desired
         for params in iter_sweep(backbone):
             param_str = "_".join(f"{k}{v}" for k, v in params.items())
             for seed in range(args.seeds):

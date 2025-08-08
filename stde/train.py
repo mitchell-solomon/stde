@@ -204,9 +204,9 @@ if args.no_stde:
         args.hess_diag_method = "stacked"
 
 # derive rand_batch_size from dimension (order of magnitude lower)
-# rand_batch_size = max(1, args.spatial_dim // 10)
-rand_batch_size = 16
-args.rand_batch_size = rand_batch_size
+rand_batch_size = max(1, args.spatial_dim // 10)
+# rand_batch_size = 16
+# args.rand_batch_size = rand_batch_size
 
 
 

@@ -144,6 +144,9 @@ def ssm_parallel_scan(x, Acoeff, Bcoeff, Ccoeff, Delta, clip: float | None = 1e-
 def inverse_softplus(x):
     return x + jnp.log(1 - jnp.exp(-x))
 
+@jit
+def relu(x):
+    return jnp.maximum(x, 0)
 
 class SelectiveSSM(nn.Module):
     """ A variation on MAMBA: https://arxiv.org/pdf/2312.00752.pdf """
@@ -202,7 +205,7 @@ class SelectiveSSM(nn.Module):
         if self.activation == "gelu":
             u = nn.gelu(u)
         elif self.activation == "relu":
-            u = nn.relu(u)
+            u = relu(u)
         elif self.activation == "silu":
             u = nn.silu(u)
         elif self.activation == "wave":

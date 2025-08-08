@@ -4,6 +4,7 @@ from typing import Sequence
 from stde.model import WaveAct
 
 import jax.numpy as jnp
+from jax import jit
 import flax.linen as nn
 
 _INIT_MAP = {
@@ -30,6 +31,10 @@ class MlpConfig:
     activation: str = "tanh"
 
 
+@jit
+def relu(x):
+    return jnp.maximum(x, 0)
+
 class MlpBackbone(nn.Module):
     cfg: MlpConfig
     time_dependent: bool = False
@@ -38,7 +43,7 @@ class MlpBackbone(nn.Module):
         if self.cfg.activation == "gelu":
             return nn.gelu(x)
         elif self.cfg.activation == "relu":
-            return nn.relu(x)
+            return relu(x)
         elif self.cfg.activation == "silu":
             return nn.silu(x)
         elif self.cfg.activation == "wave":
