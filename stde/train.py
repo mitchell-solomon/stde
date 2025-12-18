@@ -40,7 +40,7 @@ class TqdmToLogger(io.StringIO):
 
 
 def count_params(params):
-  flat_params = jax.tree_leaves(params)
+  flat_params = jax.tree.leaves(params)
   return sum([np.prod(p.shape) for p in flat_params])
 
 

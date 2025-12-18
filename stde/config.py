@@ -70,7 +70,7 @@ class EqnConfig:
   """Monte Carlo batch size for evaluating integrals (e.g. the exact solution
   to HJB-LQG)"""
   hess_diag_method: Literal["stacked", "forward", "sparse_stde", "dense_stde",
-                            "scan", "folx"] = "sparse_stde"
+                            "scan"] = "sparse_stde"
   """Method for computing the hessian diagonal"""
   rand_jac: bool = False
   """whether to randomized the Jacobian computation"""

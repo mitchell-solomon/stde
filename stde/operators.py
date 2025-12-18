@@ -3,7 +3,7 @@ from typing import Callable, Sequence, Tuple
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from folx import forward_laplacian
+
 from jax import lax
 from jax.experimental import jet
 from jaxtyping import Array, Float, Integer
@@ -138,23 +138,6 @@ def hess_diag(
 
     f_partial = partial_i(fn, argnums, *xs)
     idx_set = get_sdgd_idx_set(cfg)
-
-    if cfg.hess_diag_method == "folx":
-      assert not with_time
-
-      fwd_f = forward_laplacian(f_partial)
-      result = fwd_f(x_i)
-      f_val = result.x
-      f_x = result.jacobian.data
-
-      # HACK: folx only return hessian trace, whereas the current
-      # API returns all terms in the hessian diagonal
-      f_lapl = result.laplacian
-
-      d = cfg.rand_batch_size or cfg.dim
-      f_xx = f_lapl * jnp.ones(d) / d
-
-      return idx_set, f_val, f_x, f_xx
 
     if cfg.hess_diag_method == "dense_stde":
       taylor_2 = lambda v: jet.jet(
